@@ -25,6 +25,13 @@ app.use('/api/settings', settingsRouter);
 app.use('/api/photos', photosRouter);
 app.use('/api/configs', apiConfigsRouter);
 
+// Serve frontend static files in production
+const frontendPath = path.join(__dirname, '..', '..', 'frontend', 'dist');
+app.use(express.static(frontendPath));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendPath, 'index.html'));
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
