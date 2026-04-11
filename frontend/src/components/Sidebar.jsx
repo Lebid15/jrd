@@ -1,0 +1,73 @@
+import { useState, useEffect } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { LayoutDashboard, Archive, Image, DollarSign, Settings, Menu, X } from 'lucide-react';
+
+const links = [
+  { to: '/', icon: LayoutDashboard, label: 'الجرد' },
+  { to: '/currency', icon: DollarSign, label: 'العملات' },
+  { to: '/archive', icon: Archive, label: 'الأرشيف' },
+  { to: '/photos', icon: Image, label: 'الصور' },
+  { to: '/api-settings', icon: Settings, label: 'إعدادات API' },
+];
+
+export default function Sidebar() {
+  const [open, setOpen] = useState(false);
+  const location = useLocation();
+
+  // Close sidebar on route change (mobile)
+  useEffect(() => { setOpen(false); }, [location.pathname]);
+
+  return (
+    <>
+      {/* Mobile top bar */}
+      <div className="md:hidden fixed top-0 right-0 left-0 h-14 bg-emerald-800 text-white flex items-center justify-between px-4 z-50 shadow-lg">
+        <button onClick={() => setOpen(!open)} className="p-1">
+          {open ? <X size={24} /> : <Menu size={24} />}
+        </button>
+        <h1 className="text-lg font-bold">الجرد اليومي</h1>
+        <div className="w-8" />
+      </div>
+
+      {/* Overlay */}
+      {open && (
+        <div className="md:hidden fixed inset-0 bg-black/50 z-40" onClick={() => setOpen(false)} />
+      )}
+
+      {/* Sidebar */}
+      <aside className={`
+        fixed right-0 top-0 h-full w-64 bg-gradient-to-b from-emerald-800 to-emerald-900 text-white shadow-xl z-50 flex flex-col
+        transition-transform duration-300 ease-in-out
+        ${open ? 'translate-x-0' : 'translate-x-full'}
+        md:translate-x-0
+      `}>
+        <div className="p-6 border-b border-emerald-700">
+          <h1 className="text-2xl font-bold text-center">الجرد اليومي</h1>
+          <p className="text-emerald-300 text-sm text-center mt-1">نظام إدارة الحسابات</p>
+        </div>
+
+        <nav className="flex-1 py-4 overflow-y-auto">
+          {links.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-6 py-3 mx-3 rounded-lg transition-all duration-200 ${
+                  isActive
+                    ? 'bg-white/20 text-white font-bold shadow-md'
+                    : 'text-emerald-200 hover:bg-white/10 hover:text-white'
+                }`
+              }
+            >
+              <Icon size={20} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="p-4 border-t border-emerald-700 text-center text-emerald-400 text-xs">
+          JRD System v1.0
+        </div>
+      </aside>
+    </>
+  );
+}
