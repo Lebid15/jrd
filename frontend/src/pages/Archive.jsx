@@ -1,7 +1,183 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Eye, Trash2, ChevronDown, ChevronUp, Filter } from 'lucide-react';
+import { Calendar, Trash2, ChevronDown, ChevronUp, Filter, FileDown } from 'lucide-react';
 import { toast } from 'react-toastify';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import api from '../api.js';
+
+function formatMoney(n) {
+  return Number(n || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function escapeHtml(value = '') {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function buildInventoryReportHtml(inventory) {
+  const itemsRows = (inventory.items || [])
+    .map((item, idx) => `
+      <tr>
+        <td>${idx + 1}</td>
+        <td class="name">${escapeHtml(item.item_name)}</td>
+        <td>${formatMoney(item.try_amount)}</td>
+        <td>${formatMoney(item.usd_amount)}</td>
+        <td class="note">${escapeHtml(item.notes || '-')}</td>
+      </tr>
+    `)
+    .join('');
+
+  const profitClass = Number(inventory.profit || 0) >= 0 ? 'profit-positive' : 'profit-negative';
+
+  return `
+    <div class="report">
+      <style>
+        .report {
+          direction: rtl;
+          font-family: Tahoma, Arial, sans-serif;
+          color: #0f172a;
+          background: linear-gradient(145deg, #f8fafc, #eef2f7);
+          border: 1px solid #e2e8f0;
+          border-radius: 18px;
+          padding: 28px;
+        }
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .title {
+          margin: 0;
+          font-size: 30px;
+          font-weight: 800;
+          color: #065f46;
+        }
+        .sub {
+          margin: 6px 0 0 0;
+          color: #475569;
+          font-size: 14px;
+        }
+        .badge {
+          background: #d1fae5;
+          color: #065f46;
+          padding: 10px 16px;
+          border-radius: 999px;
+          font-weight: 700;
+          font-size: 14px;
+          border: 1px solid #a7f3d0;
+        }
+        .summary {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 12px;
+          margin: 14px 0 20px 0;
+        }
+        .card {
+          background: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 12px;
+        }
+        .card .label {
+          color: #64748b;
+          font-size: 12px;
+          margin-bottom: 4px;
+        }
+        .card .value {
+          font-size: 20px;
+          font-weight: 700;
+        }
+        .profit-positive { color: #15803d; }
+        .profit-negative { color: #dc2626; }
+        .table-wrap {
+          background: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          overflow: hidden;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+        }
+        thead tr {
+          background: #065f46;
+          color: white;
+        }
+        th, td {
+          padding: 10px 8px;
+          border-bottom: 1px solid #e2e8f0;
+          text-align: center;
+          vertical-align: top;
+        }
+        tbody tr:nth-child(even) {
+          background: #f8fafc;
+        }
+        td.name, td.note {
+          text-align: right;
+          word-break: break-word;
+        }
+        .footer {
+          margin-top: 14px;
+          color: #64748b;
+          font-size: 12px;
+          text-align: center;
+        }
+      </style>
+
+      <div class="header">
+        <div>
+          <h1 class="title">تقرير الجرد اليومي</h1>
+          <p class="sub">JRD Inventory Report</p>
+        </div>
+        <div class="badge">${escapeHtml(inventory.date)}</div>
+      </div>
+
+      <div class="summary">
+        <div class="card">
+          <div class="label">سعر الصرف</div>
+          <div class="value">${formatMoney(inventory.exchange_rate)}</div>
+        </div>
+        <div class="card">
+          <div class="label">إجمالي الجرد</div>
+          <div class="value">$${formatMoney(inventory.total_converted_usd)}</div>
+        </div>
+        <div class="card">
+          <div class="label">الربح</div>
+          <div class="value ${profitClass}">$${formatMoney(inventory.profit)}</div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>البند</th>
+              <th>TRY ₺</th>
+              <th>USD $</th>
+              <th>ملاحظات</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsRows || '<tr><td colspan="5">لا توجد بنود</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="footer">Generated by JRD System</div>
+    </div>
+  `;
+}
 
 export default function Archive() {
   const [inventories, setInventories] = useState([]);
@@ -10,6 +186,7 @@ export default function Archive() {
   const [expandedData, setExpandedData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({ from: '', to: '' });
+  const [exportingId, setExportingId] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -52,6 +229,62 @@ export default function Archive() {
       load();
     } catch {
       toast.error('خطأ في الحذف');
+    }
+  };
+
+  const exportInventoryPdf = async (id) => {
+    setExportingId(id);
+    let wrapper = null;
+    try {
+      const res = await api.get(`/inventory/${id}`);
+      const inventory = res.data;
+
+      wrapper = document.createElement('div');
+      wrapper.style.position = 'fixed';
+      wrapper.style.left = '-10000px';
+      wrapper.style.top = '0';
+      wrapper.style.width = '1120px';
+      wrapper.style.padding = '16px';
+      wrapper.style.background = '#f8fafc';
+      wrapper.innerHTML = buildInventoryReportHtml(inventory);
+      document.body.appendChild(wrapper);
+
+      const canvas = await html2canvas(wrapper, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#f8fafc',
+        logging: false,
+      });
+
+      const imageData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imageWidth = pageWidth;
+      const imageHeight = (canvas.height * imageWidth) / canvas.width;
+
+      let heightLeft = imageHeight;
+      let position = 0;
+
+      pdf.addImage(imageData, 'PNG', 0, position, imageWidth, imageHeight, '', 'FAST');
+      heightLeft -= pageHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imageHeight;
+        pdf.addPage();
+        pdf.addImage(imageData, 'PNG', 0, position, imageWidth, imageHeight, '', 'FAST');
+        heightLeft -= pageHeight;
+      }
+
+      pdf.save(`JRD_Inventory_${inventory.date}.pdf`);
+      toast.success('تم تصدير ملف PDF');
+    } catch {
+      toast.error('تعذر تصدير PDF');
+    } finally {
+      if (wrapper && wrapper.parentNode) {
+        wrapper.parentNode.removeChild(wrapper);
+      }
+      setExportingId(null);
     }
   };
 
@@ -129,6 +362,14 @@ export default function Archive() {
                       ${Number(inv.profit).toFixed(2)}
                     </p>
                   </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); exportInventoryPdf(inv.id); }}
+                    disabled={exportingId === inv.id}
+                    className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg disabled:opacity-50"
+                    title="تصدير PDF"
+                  >
+                    <FileDown size={16} className={exportingId === inv.id ? 'animate-pulse' : ''} />
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); deleteInventory(inv.id); }}
                     className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
