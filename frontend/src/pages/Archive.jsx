@@ -77,9 +77,14 @@ function buildInventoryReportHtml(inventory) {
         }
         .summary {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(5, 1fr);
           gap: 12px;
           margin: 14px 0 20px 0;
+        }
+        @media (max-width: 1100px) {
+          .summary {
+            grid-template-columns: repeat(3, 1fr);
+          }
         }
         .card {
           background: white;
@@ -144,12 +149,20 @@ function buildInventoryReportHtml(inventory) {
 
       <div class="summary">
         <div class="card">
+          <div class="label">مجموع الليرة التركية</div>
+          <div class="value">₺${formatMoney(inventory.total_try)}</div>
+        </div>
+        <div class="card">
           <div class="label">سعر الصرف</div>
           <div class="value">${formatMoney(inventory.exchange_rate)}</div>
         </div>
         <div class="card">
           <div class="label">إجمالي الجرد</div>
           <div class="value">$${formatMoney(inventory.total_converted_usd)}</div>
+        </div>
+        <div class="card">
+          <div class="label">الجرد السابق</div>
+          <div class="value">$${formatMoney(inventory.previous_total_usd)}</div>
         </div>
         <div class="card">
           <div class="label">الربح</div>
