@@ -66,8 +66,9 @@ export async function fetchBalance(providerType, config, opts = {}) {
     }
     case 'bayi_alayatl': {
       const result = await runBayiAlayatlScraper(config, { itemId: opts.itemId });
-      // The value we care about is "Bayi Alacağı" (the net difference)
-      return { value: result.bayi_alacagi, details: result };
+      // We want "Benim Alacağım" = نفس الرقم بإشارة معكوسة عن "Bayi Alacağı"
+      const value = result.bayi_alacagi != null ? -result.bayi_alacagi : null;
+      return { value, details: result };
     }
     default:
       throw new Error(`Unknown provider type: ${providerType}`);
