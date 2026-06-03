@@ -44,10 +44,11 @@ COPY scraper/ ./scraper/
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 # Persistent data dir (mounted as a Volume in Railway)
-RUN mkdir -p /data/uploads /data/browser-data \
- && chown -R pwuser:pwuser /data /app
+RUN mkdir -p /data/uploads /data/browser-data
 
-USER pwuser
+# Note: we run as root because Railway-mounted volumes are root-owned.
+# Chromium is launched with --no-sandbox (see scraper/src/fetch.js).
+# This is acceptable for a single-tenant internal app.
 
 EXPOSE 3001
 

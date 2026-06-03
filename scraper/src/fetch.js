@@ -118,6 +118,7 @@ async function main() {
   const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: HEADLESS,
     viewport: { width: 1280, height: 800 },
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
 
   const page = context.pages()[0] || (await context.newPage());
