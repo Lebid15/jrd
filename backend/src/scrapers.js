@@ -80,15 +80,17 @@ export function runBayiAlayatlScraper(config, { itemId } = {}) {
           return reject(new Error('Bad JSON from scraper: ' + err.message));
         }
       }
-      // Extract a useful error line if present
-      const errLines = (stderr + '\n' + stdout)
-        .split('\n')
-        .map(l => l.trim())
-        .filter(l => l && !l.startsWith('[scraper]'));
-      const meaningful =
-        errLines.find(l => /error|fail|timeout|invalid|missing|denied|cannot|not found|unable/i.test(l)) ||
-        errLines.slice(-1)[0] || '';
-      reject(new Error(`Scraper exited (code ${code}): ${meaningful.slice(0, 300)}`));
+      // Prefer the explicit "[error] ..." line printed by fetch.js
+      const allLines = (stdout + '\n' + stderr).split('\n').map(l => l.trim()).filter(Boolean);
+      const errLine = allLines.find(l => l.startsWith('[error]'));
+      let meaningful;
+      if (errLine) {
+        meaningful = errLine.replace(/^\[error\]\s*/, '');
+      } else {
+        // Fallback: last 5 non-empty lines
+        meaningful = allLines.slice(-5).join(' | ');
+      }
+      reject(new Error(`Scraper exited (code ${code}): ${meaningful.slice(0, 500)}`));
     });
   });
 }
