@@ -38,6 +38,10 @@ RUN cd backend && npm install --omit=dev && npm cache clean --force
 COPY scraper/package*.json ./scraper/
 RUN cd scraper && npm install --omit=dev && npm cache clean --force
 
+# Ensure Chromium browser is present at PLAYWRIGHT_BROWSERS_PATH (in case
+# the scraper's playwright version differs from the base image's bundled one).
+RUN cd scraper && npx playwright install chromium
+
 # Copy app source
 COPY backend/ ./backend/
 COPY scraper/ ./scraper/

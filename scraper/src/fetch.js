@@ -115,17 +115,19 @@ async function main() {
   fs.mkdirSync(USER_DATA_DIR, { recursive: true });
   console.log(`[browser] launching persistent context at ${USER_DATA_DIR}`);
 
-  const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
-    headless: HEADLESS,
-    viewport: { width: 1280, height: 800 },
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
-
-  const page = context.pages()[0] || (await context.newPage());
-  page.setDefaultTimeout(NAV_TIMEOUT);
-
+  let context;
+  let page;
   let exitCode = 0;
   try {
+    context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+      headless: HEADLESS,
+      viewport: { width: 1280, height: 800 },
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+
+    page = context.pages()[0] || (await context.newPage());
+    page.setDefaultTimeout(NAV_TIMEOUT);
+
     await ensureLoggedIn(page);
     const totals = await extractTotals(page);
 
@@ -141,14 +143,17 @@ async function main() {
       exitCode = 2;
     }
   } catch (err) {
-    console.error('[error]', err.message);
+    console.error('[error]', err && err.message ? err.message.split('\n')[0] : String(err));
+    if (err && err.stack) console.error('[error:stack]', err.stack.split('\n').slice(0, 5).join(' | '));
     try {
-      await page.screenshot({ path: path.join(__dirname, '..', 'debug-error.png'), fullPage: true });
-      console.error('[error] screenshot saved to debug-error.png');
+      if (page) {
+        await page.screenshot({ path: path.join(__dirname, '..', 'debug-error.png'), fullPage: true });
+        console.error('[error] screenshot saved to debug-error.png');
+      }
     } catch {}
     exitCode = 1;
   } finally {
-    await context.close();
+    try { if (context) await context.close(); } catch {}
   }
 
   process.exit(exitCode);
