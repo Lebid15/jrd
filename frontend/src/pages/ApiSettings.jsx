@@ -7,6 +7,7 @@ const PROVIDER_TYPES = [
   { value: 'znet', label: 'Znet', fields: ['base_url', 'kod', 'sifre'] },
   { value: 'barakat', label: 'Barakat / APStore', fields: ['base_url', 'api_token'] },
   { value: 'murat_temiz', label: 'Murat Temiz', fields: ['base_url', 'kod', 'sifre'] },
+  { value: 'smm_panel', label: 'SMM Panel (متابعين/مشاهدات)', fields: ['base_url', 'api_token'] },
   { value: 'bayi_alayatl', label: 'روبوت موقع Bayi Alayatl', fields: ['base_url', 'kod', 'sifre'] },
 ];
 
@@ -221,6 +222,38 @@ export default function ApiSettings() {
                     dir="ltr"
                   />
                 </div>
+              )}
+
+              {/* SMM Panel fields */}
+              {config.provider_type === 'smm_panel' && (
+                <>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">رابط الموقع</label>
+                    <input
+                      type="text"
+                      placeholder="https://followers-store.com"
+                      value={config.base_url}
+                      onChange={(e) => setConfig({ ...config, base_url: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      dir="ltr"
+                    />
+                  </div>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">كود API الخاص بحسابك</label>
+                    <input
+                      type="password"
+                      placeholder="Zp9qCzw7..."
+                      value={config.api_token}
+                      onChange={(e) => setConfig({ ...config, api_token: e.target.value })}
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      dir="ltr"
+                    />
+                  </div>
+                  <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-700">
+                    <Wifi size={16} className="inline ml-1" />
+                    يستخدم API رسمي (لا يحتاج روبوت). الرصيد يُحفظ في خانة <b>$ دولار</b>.
+                  </div>
+                </>
               )}
 
               <div className="flex gap-3 mt-6">

@@ -43,16 +43,17 @@ router.post('/:itemId/fetch', async (req, res) => {
 
     const result = await fetchBalance(config.provider_type, config, { itemId: req.params.itemId });
     const roundedValue = Math.round(result.value * 100) / 100;
+    const isUsd = result.currency === 'USD';
+    const field = isUsd ? 'usd_amount' : 'try_amount';
 
-    // Update current value (TRY amount) with net value
     const existing = db.prepare('SELECT id FROM current_values WHERE item_id = ?').get(req.params.itemId);
     if (existing) {
-      db.prepare('UPDATE current_values SET try_amount = ? WHERE item_id = ?').run(roundedValue, req.params.itemId);
+      db.prepare(`UPDATE current_values SET ${field} = ? WHERE item_id = ?`).run(roundedValue, req.params.itemId);
     } else {
-      db.prepare('INSERT INTO current_values (item_id, try_amount) VALUES (?, ?)').run(req.params.itemId, roundedValue);
+      db.prepare(`INSERT INTO current_values (item_id, ${field}) VALUES (?, ?)`).run(req.params.itemId, roundedValue);
     }
 
-    res.json({ balance: roundedValue, details: result.details });
+    res.json({ balance: roundedValue, currency: result.currency || 'TRY', details: result.details });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -72,15 +73,17 @@ router.post('/fetch-all', async (req, res) => {
     try {
       const result = await fetchBalance(config.provider_type, config, { itemId: config.item_id });
       const roundedValue = Math.round(result.value * 100) / 100;
+      const isUsd = result.currency === 'USD';
+      const field = isUsd ? 'usd_amount' : 'try_amount';
 
       const existing = db.prepare('SELECT id FROM current_values WHERE item_id = ?').get(config.item_id);
       if (existing) {
-        db.prepare('UPDATE current_values SET try_amount = ? WHERE item_id = ?').run(roundedValue, config.item_id);
+        db.prepare(`UPDATE current_values SET ${field} = ? WHERE item_id = ?`).run(roundedValue, config.item_id);
       } else {
-        db.prepare('INSERT INTO current_values (item_id, try_amount) VALUES (?, ?)').run(config.item_id, roundedValue);
+        db.prepare(`INSERT INTO current_values (item_id, ${field}) VALUES (?, ?)`).run(config.item_id, roundedValue);
       }
 
-      results.push({ item_id: config.item_id, name: config.item_name, balance: roundedValue, details: result.details, success: true });
+      results.push({ item_id: config.item_id, name: config.item_name, balance: roundedValue, currency: result.currency || 'TRY', details: result.details, success: true });
     } catch (err) {
       results.push({ item_id: config.item_id, name: config.item_name, error: err.message, success: false });
     }

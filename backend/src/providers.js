@@ -49,6 +49,23 @@ export async function fetchMuratTemizBalance(config) {
   throw new Error(`Murat Temiz error: ${text}`);
 }
 
+export async function fetchSmmPanelBalance(config) {
+  const cleanUrl = (config.base_url || '').replace(/\/+$/, '');
+  const url = `${cleanUrl}/api/v2`;
+  const body = new URLSearchParams({ key: config.api_token || '', action: 'balance' });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+    timeout: 15000,
+  });
+  const data = await res.json();
+  if (data.status === 'success' || data.balance != null) {
+    return { balance: parseFloat(data.balance) || 0, currency: data.currency || 'USD' };
+  }
+  throw new Error(`SMM Panel error: ${JSON.stringify(data)}`);
+}
+
 export async function fetchBalance(providerType, config, opts = {}) {
   switch (providerType) {
     case 'znet': {
@@ -63,6 +80,11 @@ export async function fetchBalance(providerType, config, opts = {}) {
     case 'murat_temiz': {
       const result = await fetchMuratTemizBalance(config);
       return { value: result.net, details: result };
+    }
+    case 'smm_panel': {
+      const result = await fetchSmmPanelBalance(config);
+      // Balance is in USD — signal with currency field so the route saves to usd_amount
+      return { value: result.balance, currency: 'USD', details: result };
     }
     case 'bayi_alayatl': {
       const result = await runBayiAlayatlScraper(config, { itemId: opts.itemId });
