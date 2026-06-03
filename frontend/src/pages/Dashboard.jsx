@@ -71,9 +71,12 @@ export default function Dashboard() {
       const res = await api.post('/configs/fetch-all');
       const results = res.data;
       const success = results.filter(r => r.success).length;
-      const failed = results.filter(r => !r.success).length;
+      const failures = results.filter(r => !r.success);
       if (success > 0) toast.success(`تم جلب ${success} رصيد بنجاح`);
-      if (failed > 0) toast.warn(`فشل جلب ${failed} رصيد`);
+      for (const f of failures) {
+        console.error('[fetch-all failure]', f);
+        toast.error(`فشل ${f.name}: ${f.error || 'خطأ غير معروف'}`, { autoClose: 8000 });
+      }
       loadData();
     } catch { toast.error('خطأ في جلب الأرصدة'); }
     finally { setFetching(false); }

@@ -80,8 +80,15 @@ export function runBayiAlayatlScraper(config, { itemId } = {}) {
           return reject(new Error('Bad JSON from scraper: ' + err.message));
         }
       }
-      const tail = (stderr || stdout).slice(-400).trim();
-      reject(new Error(`Scraper exited with code ${code}. ${tail}`));
+      // Extract a useful error line if present
+      const errLines = (stderr + '\n' + stdout)
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l && !l.startsWith('[scraper]'));
+      const meaningful =
+        errLines.find(l => /error|fail|timeout|invalid|missing|denied|cannot|not found|unable/i.test(l)) ||
+        errLines.slice(-1)[0] || '';
+      reject(new Error(`Scraper exited (code ${code}): ${meaningful.slice(0, 300)}`));
     });
   });
 }
