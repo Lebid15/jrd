@@ -129,7 +129,23 @@ async function main() {
     page.setDefaultTimeout(NAV_TIMEOUT);
 
     await ensureLoggedIn(page);
-    const totals = await extractTotals(page);
+    let totals = await extractTotals(page);
+
+    // Stale session: the site shows the user as logged in but the dealers page
+    // is empty (happens every night between ~00:00–06:00).
+    // Detection: bayi_alacagi is null AND toplam_bayi_sayisi is 0/null.
+    if (totals.bayi_alacagi === null && !totals.toplam_bayi_sayisi) {
+      console.log('[session] stale session detected — clearing cookies and re-logging in ...');
+      await context.clearCookies();
+      // Also clear localStorage/sessionStorage to fully reset the session
+      await page.evaluate(() => {
+        try { localStorage.clear(); } catch {}
+        try { sessionStorage.clear(); } catch {}
+      });
+      await ensureLoggedIn(page);
+      totals = await extractTotals(page);
+      console.log('[session] after fresh login:');
+    }
 
     console.log('\n=== Bayiler Totals ===');
     console.log(JSON.stringify(totals, null, 2));
