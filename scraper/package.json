@@ -1,0 +1,13 @@
+{
+  "name": "jrd-scraper",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "fetch": "node src/fetch.js",
+    "install:browser": "playwright install chromium"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.47.0"
+  }
+}

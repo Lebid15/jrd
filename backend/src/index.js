@@ -9,6 +9,9 @@ import photosRouter from './routes/photos.js';
 import apiConfigsRouter from './routes/apiConfigs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, '..', 'data');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -16,7 +19,10 @@ app.use(cors());
 app.use(express.json());
 
 // Serve uploaded photos
-app.use('/uploads', express.static(path.join(__dirname, '..', 'data', 'uploads')));
+app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));
+
+// Healthcheck (Railway)
+app.get('/healthz', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
 // API routes
 app.use('/api/items', itemsRouter);

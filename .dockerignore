@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/build
+**/.env
+**/.env.local
+**/browser-data
+backend/data
+scraper/browser-data
+.git
+.github
+.vscode
+**/debug-*.png
+*.log
+README.md
+plan.md
+bothelp.md

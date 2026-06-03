@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import { runBayiAlayatlScraper } from './scrapers.js';
 
 export async function fetchZnetBalance(config) {
   const { base_url, kod, sifre } = config;
@@ -48,7 +49,7 @@ export async function fetchMuratTemizBalance(config) {
   throw new Error(`Murat Temiz error: ${text}`);
 }
 
-export async function fetchBalance(providerType, config) {
+export async function fetchBalance(providerType, config, opts = {}) {
   switch (providerType) {
     case 'znet': {
       const result = await fetchZnetBalance(config);
@@ -62,6 +63,11 @@ export async function fetchBalance(providerType, config) {
     case 'murat_temiz': {
       const result = await fetchMuratTemizBalance(config);
       return { value: result.net, details: result };
+    }
+    case 'bayi_alayatl': {
+      const result = await runBayiAlayatlScraper(config, { itemId: opts.itemId });
+      // The value we care about is "Bayi Alacağı" (the net difference)
+      return { value: result.bayi_alacagi, details: result };
     }
     default:
       throw new Error(`Unknown provider type: ${providerType}`);

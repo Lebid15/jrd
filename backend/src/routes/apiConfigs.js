@@ -41,7 +41,7 @@ router.post('/:itemId/fetch', async (req, res) => {
     const config = db.prepare('SELECT * FROM api_configs WHERE item_id = ?').get(req.params.itemId);
     if (!config) return res.status(404).json({ error: 'No API config found' });
 
-    const result = await fetchBalance(config.provider_type, config);
+    const result = await fetchBalance(config.provider_type, config, { itemId: req.params.itemId });
     const roundedValue = Math.round(result.value * 100) / 100;
 
     // Update current value (TRY amount) with net value
@@ -70,7 +70,7 @@ router.post('/fetch-all', async (req, res) => {
   const results = [];
   for (const config of configs) {
     try {
-      const result = await fetchBalance(config.provider_type, config);
+      const result = await fetchBalance(config.provider_type, config, { itemId: config.item_id });
       const roundedValue = Math.round(result.value * 100) / 100;
 
       const existing = db.prepare('SELECT id FROM current_values WHERE item_id = ?').get(config.item_id);

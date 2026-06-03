@@ -1,12 +1,15 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, '..', 'data', 'jrd.db');
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(__dirname, '..', 'data');
+const dbPath = path.join(DATA_DIR, 'jrd.db');
 
-import fs from 'fs';
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');

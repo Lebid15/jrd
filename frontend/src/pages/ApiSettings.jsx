@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Plus, Save, Trash2, Wifi, TestTube } from 'lucide-react';
+import { Settings, Plus, Save, Trash2, Wifi, TestTube, Bot } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -7,7 +7,11 @@ const PROVIDER_TYPES = [
   { value: 'znet', label: 'Znet', fields: ['base_url', 'kod', 'sifre'] },
   { value: 'barakat', label: 'Barakat / APStore', fields: ['base_url', 'api_token'] },
   { value: 'murat_temiz', label: 'Murat Temiz', fields: ['base_url', 'kod', 'sifre'] },
+  { value: 'bayi_alayatl', label: 'روبوت موقع Bayi Alayatl', fields: ['base_url', 'kod', 'sifre'] },
 ];
+
+const SCRAPER_PROVIDERS = new Set(['bayi_alayatl']);
+const isScraper = (providerType) => SCRAPER_PROVIDERS.has(providerType);
 
 export default function ApiSettings() {
   const [items, setItems] = useState([]);
@@ -116,7 +120,9 @@ export default function ApiSettings() {
               >
                 <span className="font-medium">{item.name}</span>
                 {item.type === 'provider' && (
-                  <Wifi size={14} className="text-emerald-600" />
+                  isScraper(item.provider_type)
+                    ? <Bot size={14} className="text-blue-600" />
+                    : <Wifi size={14} className="text-emerald-600" />
                 )}
               </div>
             ))}
@@ -167,11 +173,13 @@ export default function ApiSettings() {
                 />
               </div>
 
-              {/* Znet / Murat Temiz fields */}
-              {(config.provider_type === 'znet' || config.provider_type === 'murat_temiz') && (
+              {/* Znet / Murat Temiz / Bayi Alayatl fields */}
+              {(config.provider_type === 'znet' || config.provider_type === 'murat_temiz' || config.provider_type === 'bayi_alayatl') && (
                 <>
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">الكود (kod)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {config.provider_type === 'bayi_alayatl' ? 'رقم الجوال' : 'الكود (kod)'}
+                    </label>
                     <input
                       type="text"
                       value={config.kod}
@@ -181,7 +189,9 @@ export default function ApiSettings() {
                     />
                   </div>
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">كلمة المرور (sifre)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {config.provider_type === 'bayi_alayatl' ? 'كلمة السر' : 'كلمة المرور (sifre)'}
+                    </label>
                     <input
                       type="password"
                       value={config.sifre}
@@ -190,6 +200,12 @@ export default function ApiSettings() {
                       dir="ltr"
                     />
                   </div>
+                  {config.provider_type === 'bayi_alayatl' && (
+                    <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+                      <Bot size={16} className="inline ml-1" />
+                      سيستخدم روبوت لفتح الموقع وجلب رقم <b>Bayi Alacağı</b> (الفرق بين الديون والأرصدة). العملية تستغرق ~30 ثانية.
+                    </div>
+                  )}
                 </>
               )}
 

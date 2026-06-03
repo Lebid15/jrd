@@ -1,8 +1,12 @@
 {
   "name": "jrd",
   "version": "1.0.0",
+  "private": true,
   "scripts": {
-    "build": "cd frontend && npm install && npm run build",
-    "start": "cd backend && npm install && npm run start"
+    "install:all": "npm install --prefix backend && npm install --prefix frontend && npm install --prefix scraper",
+    "build": "npm install --prefix frontend && npm run build --prefix frontend",
+    "start": "node backend/src/index.js",
+    "dev:backend": "npm run dev --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend"
   }
 }
