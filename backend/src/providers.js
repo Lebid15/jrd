@@ -63,6 +63,10 @@ export async function fetchSmmPanelBalance(config) {
     ? `${proxyBase}/?target=${encodeURIComponent(targetUrl)}`
     : targetUrl;
 
+  console.log('[SMM] proxyBase:', proxyBase ? proxyBase : '(empty — direct mode)');
+  console.log('[SMM] hasSecret:', !!process.env.SMM_PROXY_SECRET);
+  console.log('[SMM] request URL:', url);
+
   const body = new URLSearchParams({ key: config.api_token || '', action: 'balance' });
   const headers = {
     'Content-Type': 'application/x-www-form-urlencoded',
@@ -88,12 +92,12 @@ export async function fetchSmmPanelBalance(config) {
     timeout: 15000,
   });
   const text = await res.text();
+  console.log('[SMM] response HTTP', res.status, '— first 200 chars:', text.slice(0, 200));
   // Guard against HTML responses (geo-block / wrong endpoint / Cloudflare challenge)
   if (text.trimStart().startsWith('<')) {
     throw new Error(
       `SMM Panel: استجابة HTML بدلاً من JSON (HTTP ${res.status}) من ${url}. ` +
-      `تأكّد أن "base_url" هو رابط الموقع الجذر فقط (مثل https://followers-store.com) بدون /api/v2، ` +
-      `وأن الـ IP الخاص بالخادم غير محجوب من Cloudflare.`
+      `proxyBase=${proxyBase || '(empty)'} | تحقق من logs Railway لرؤية تفاصيل الطلب.`
     );
   }
   let data;
