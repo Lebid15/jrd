@@ -32,26 +32,31 @@ function decrypt(key, buf) {
 export async function useEncryptedAuthState(folder) {
   fs.mkdirSync(folder, { recursive: true });
 
+  const { initAuthCreds, BufferJSON } = await import('@whiskeysockets/baileys');
+
   const readFile = (filename) => {
     const fp = path.join(folder, filename);
     if (!fs.existsSync(fp)) return null;
     const buf = fs.readFileSync(fp);
     const key = deriveKey(filename);
+    let plain;
     if (key && buf.slice(0, 4).equals(MAGIC)) {
-      return JSON.parse(decrypt(key, buf).toString());
+      plain = decrypt(key, buf).toString();
+    } else {
+      plain = buf.toString();
     }
-    return JSON.parse(buf.toString());
+    return JSON.parse(plain, BufferJSON.reviver);
   };
 
   const writeFile = (filename, data) => {
     const fp = path.join(folder, filename);
-    const plain = Buffer.from(JSON.stringify(data));
+    const plain = Buffer.from(JSON.stringify(data, BufferJSON.replacer));
     const key = deriveKey(filename);
     fs.writeFileSync(fp, key ? encrypt(key, plain) : plain);
   };
 
-  const { default: makeWASocket } = await import('@whiskeysockets/baileys');
-  const { initAuthCreds, BufferJSON } = await import('@whiskeysockets/baileys');
+  // اسم ملف آمن (يحوي أحياناً ':' في معرّفات Baileys)
+  const safeName = (name) => name.replace(/\//g, '__').replace(/:/g, '-');
 
   let creds = readFile('creds.json') || initAuthCreds();
 
@@ -59,20 +64,29 @@ export async function useEncryptedAuthState(folder) {
     state: {
       creds,
       keys: {
-        get: (type, ids) => {
+        get: async (type, ids) => {
           const data = {};
           for (const id of ids) {
-            const val = readFile(`${type}-${id}.json`);
-            if (val) data[id] = val;
+            const val = readFile(safeName(`${type}-${id}.json`));
+            if (val) {
+              // app-state-sync-key يحتاج معالجة خاصة
+              if (type === 'app-state-sync-key') {
+                const { proto } = await import('@whiskeysockets/baileys');
+                data[id] = proto.Message.AppStateSyncKeyData.fromObject(val);
+              } else {
+                data[id] = val;
+              }
+            }
           }
           return data;
         },
         set: (data) => {
           for (const [type, ids] of Object.entries(data)) {
             for (const [id, val] of Object.entries(ids || {})) {
-              if (val) writeFile(`${type}-${id}.json`, val);
+              const fname = safeName(`${type}-${id}.json`);
+              if (val) writeFile(fname, val);
               else {
-                const fp = path.join(folder, `${type}-${id}.json`);
+                const fp = path.join(folder, fname);
                 if (fs.existsSync(fp)) fs.unlinkSync(fp);
               }
             }
