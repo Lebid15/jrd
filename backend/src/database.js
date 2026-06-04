@@ -78,6 +78,19 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS bank_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
+    direction TEXT NOT NULL CHECK(direction IN ('in', 'out')),
+    amount REAL NOT NULL,
+    sender_receiver TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    transaction_time TEXT DEFAULT '',
+    raw_sms TEXT DEFAULT '',
+    balance_after REAL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // Default settings

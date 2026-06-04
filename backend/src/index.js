@@ -7,6 +7,7 @@ import inventoryRouter from './routes/inventory.js';
 import settingsRouter from './routes/settings.js';
 import photosRouter from './routes/photos.js';
 import apiConfigsRouter from './routes/apiConfigs.js';
+import bankRouter from './routes/bank.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR
@@ -30,6 +31,7 @@ app.use('/api/inventory', inventoryRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/photos', photosRouter);
 app.use('/api/configs', apiConfigsRouter);
+app.use('/api/bank', bankRouter);
 
 // Serve frontend static files in production
 const frontendPath = path.join(__dirname, '..', '..', 'frontend', 'dist');
