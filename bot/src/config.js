@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 export const config = {
-  backendUrl: process.env.BACKEND_URL || 'http://localhost:3001',
+  backendUrl: process.env.BACKEND_URL || 'http://127.0.0.1:3001',
   internalApiKey: process.env.INTERNAL_API_KEY || '',
   botPort: parseInt(process.env.BOT_PORT || '3100'),
   botHost: process.env.BOT_HOST || '0.0.0.0',
