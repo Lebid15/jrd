@@ -50,7 +50,11 @@ export async function fetchMuratTemizBalance(config) {
 }
 
 export async function fetchSmmPanelBalance(config) {
-  const cleanUrl = (config.base_url || '').replace(/\/+$/, '');
+  // Normalize base URL: strip trailing slashes, and any trailing /api or /api/v2
+  // so the user can paste either the site root (https://followers-store.com)
+  // or the full API URL (https://followers-store.com/api/v2) — both work.
+  let cleanUrl = (config.base_url || '').trim().replace(/\/+$/, '');
+  cleanUrl = cleanUrl.replace(/\/api(\/v2)?$/i, '');
   const url = `${cleanUrl}/api/v2`;
   const body = new URLSearchParams({ key: config.api_token || '', action: 'balance' });
   const res = await fetch(url, {
@@ -64,16 +68,20 @@ export async function fetchSmmPanelBalance(config) {
     timeout: 15000,
   });
   const text = await res.text();
-  // Guard against HTML responses (geo-block / wrong endpoint)
+  // Guard against HTML responses (geo-block / wrong endpoint / Cloudflare challenge)
   if (text.trimStart().startsWith('<')) {
-    throw new Error(`SMM Panel returned HTML instead of JSON (HTTP ${res.status}). Check the base URL.`);
+    throw new Error(
+      `SMM Panel: استجابة HTML بدلاً من JSON (HTTP ${res.status}) من ${url}. ` +
+      `تأكّد أن "base_url" هو رابط الموقع الجذر فقط (مثل https://followers-store.com) بدون /api/v2، ` +
+      `وأن الـ IP الخاص بالخادم غير محجوب من Cloudflare.`
+    );
   }
   let data;
-  try { data = JSON.parse(text); } catch { throw new Error(`SMM Panel bad response: ${text.slice(0, 100)}`); }
+  try { data = JSON.parse(text); } catch { throw new Error(`SMM Panel bad response from ${url}: ${text.slice(0, 200)}`); }
   if (data.status === 'success' || data.balance != null) {
     return { balance: parseFloat(data.balance) || 0, currency: data.currency || 'USD' };
   }
-  throw new Error(`SMM Panel error: ${JSON.stringify(data)}`);
+  throw new Error(`SMM Panel error from ${url}: ${JSON.stringify(data)}`);
 }
 
 export async function fetchBalance(providerType, config, opts = {}) {
