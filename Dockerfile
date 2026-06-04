@@ -38,6 +38,10 @@ RUN cd backend && npm install --omit=dev && npm cache clean --force
 COPY scraper/package*.json ./scraper/
 RUN cd scraper && npm install --omit=dev && npm cache clean --force
 
+# Install bot deps
+COPY bot/package*.json ./bot/
+RUN cd bot && npm install --omit=dev && npm cache clean --force
+
 # Ensure Chromium browser is present at PLAYWRIGHT_BROWSERS_PATH (in case
 # the scraper's playwright version differs from the base image's bundled one).
 RUN cd scraper && npx playwright install chromium
@@ -45,15 +49,18 @@ RUN cd scraper && npx playwright install chromium
 # Copy app source
 COPY backend/ ./backend/
 COPY scraper/ ./scraper/
+COPY bot/ ./bot/
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 # Persistent data dir (mounted as a Volume in Railway)
-RUN mkdir -p /data/uploads /data/browser-data
+RUN mkdir -p /data/uploads /data/browser-data /data/auth_sessions
 
 # Note: we run as root because Railway-mounted volumes are root-owned.
 # Chromium is launched with --no-sandbox (see scraper/src/fetch.js).
 # This is acceptable for a single-tenant internal app.
 
 EXPOSE 3001
+EXPOSE 3100
 
-CMD ["node", "backend/src/index.js"]
+# نشغّل backend والبوت معاً
+CMD node backend/src/index.js & node bot/src/index.js & wait

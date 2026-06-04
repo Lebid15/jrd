@@ -1,0 +1,17 @@
+{
+  "name": "jrd-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "gen:key": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\""
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "express": "^4.22.0",
+    "pino": "^9.0.0",
+    "qrcode": "^1.5.4",
+    "dotenv": "^16.0.0"
+  }
+}

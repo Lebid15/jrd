@@ -6,6 +6,7 @@ import Photos from './pages/Photos.jsx';
 import Currency from './pages/Currency.jsx';
 import ApiSettings from './pages/ApiSettings.jsx';
 import Bank from './pages/Bank.jsx';
+import WhatsApp from './pages/WhatsApp.jsx';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="/currency" element={<Currency />} />
             <Route path="/api-settings" element={<ApiSettings />} />
             <Route path="/bank" element={<Bank />} />
+            <Route path="/whatsapp" element={<WhatsApp />} />
           </Routes>
         </main>
       </div>

@@ -91,6 +91,19 @@ db.exec(`
     balance_after REAL DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id TEXT DEFAULT '1',
+    group_id TEXT NOT NULL,
+    group_name TEXT DEFAULT '',
+    sender TEXT DEFAULT '',
+    sender_name TEXT DEFAULT '',
+    message_id TEXT UNIQUE,
+    text TEXT NOT NULL,
+    is_group INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // Default settings
