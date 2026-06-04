@@ -43,6 +43,11 @@ export default function ApiSettings() {
 
   const selectItem = async (item) => {
     setSelectedItem(item);
+    // إذا كان البند من نوع bank، نضبط مباشرة بدون استدعاء api_configs
+    if (item.type === 'bank') {
+      setConfig({ provider_type: 'kuveyt_turk', base_url: '', api_token: '', kod: '', sifre: '' });
+      return;
+    }
     try {
       const res = await api.get(`/configs/${item.id}`);
       if (res.data) {
