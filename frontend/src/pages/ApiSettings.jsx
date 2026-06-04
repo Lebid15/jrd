@@ -228,17 +228,6 @@ export default function ApiSettings() {
               {config.provider_type === 'smm_panel' && (
                 <>
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">رابط الموقع</label>
-                    <input
-                      type="text"
-                      placeholder="https://followers-store.com"
-                      value={config.base_url}
-                      onChange={(e) => setConfig({ ...config, base_url: e.target.value })}
-                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400"
-                      dir="ltr"
-                    />
-                  </div>
-                  <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 mb-1">كود API الخاص بحسابك</label>
                     <input
                       type="password"

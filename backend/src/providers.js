@@ -55,11 +55,21 @@ export async function fetchSmmPanelBalance(config) {
   const body = new URLSearchParams({ key: config.api_token || '', action: 'balance' });
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (compatible; JRD-Balance-Bot/1.0)',
+    },
     body: body.toString(),
     timeout: 15000,
   });
-  const data = await res.json();
+  const text = await res.text();
+  // Guard against HTML responses (geo-block / wrong endpoint)
+  if (text.trimStart().startsWith('<')) {
+    throw new Error(`SMM Panel returned HTML instead of JSON (HTTP ${res.status}). Check the base URL.`);
+  }
+  let data;
+  try { data = JSON.parse(text); } catch { throw new Error(`SMM Panel bad response: ${text.slice(0, 100)}`); }
   if (data.status === 'success' || data.balance != null) {
     return { balance: parseFloat(data.balance) || 0, currency: data.currency || 'USD' };
   }
