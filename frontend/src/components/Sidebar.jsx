@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Archive, Image, DollarSign, Settings, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Archive, Image, DollarSign, Settings, Menu, X, Landmark } from 'lucide-react';
 
 const links = [
   { to: '/', icon: LayoutDashboard, label: 'الجرد' },
   { to: '/currency', icon: DollarSign, label: 'العملات' },
+  { to: '/bank', icon: Landmark, label: 'البنك' },
   { to: '/archive', icon: Archive, label: 'الأرشيف' },
   { to: '/photos', icon: Image, label: 'الصور' },
   { to: '/api-settings', icon: Settings, label: 'إعدادات API' },

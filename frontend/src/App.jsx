@@ -5,6 +5,7 @@ import Archive from './pages/Archive.jsx';
 import Photos from './pages/Photos.jsx';
 import Currency from './pages/Currency.jsx';
 import ApiSettings from './pages/ApiSettings.jsx';
+import Bank from './pages/Bank.jsx';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
             <Route path="/photos" element={<Photos />} />
             <Route path="/currency" element={<Currency />} />
             <Route path="/api-settings" element={<ApiSettings />} />
+            <Route path="/bank" element={<Bank />} />
           </Routes>
         </main>
       </div>
