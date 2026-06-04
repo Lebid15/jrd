@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Plus, Save, Trash2, Wifi, TestTube, Bot } from 'lucide-react';
+import { Settings, Plus, Save, Trash2, Wifi, TestTube, Bot, Landmark } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -72,10 +72,12 @@ export default function ApiSettings() {
       if (config.provider_type === 'kuveyt_turk') {
         // البنك لا يحتاج api_configs — فقط نضبط نوع البند
         await api.put(`/items/${selectedItem.id}`, { type: 'bank' });
+        setSelectedItem(prev => ({ ...prev, type: 'bank' }));
         toast.success('تم ضبط البند كحساب بنكي ✅');
       } else {
         await api.put(`/items/${selectedItem.id}`, { type: 'provider' });
         await api.put(`/configs/${selectedItem.id}`, config);
+        setSelectedItem(prev => ({ ...prev, type: 'provider' }));
         toast.success('تم حفظ الإعدادات');
       }
       load();
@@ -124,22 +126,53 @@ export default function ApiSettings() {
         <div className="bg-white rounded-xl shadow-lg overflow-hidden">
           <div className="bg-emerald-700 text-white py-3 px-4 font-bold">البنود</div>
           <div className="max-h-[300px] md:max-h-[600px] overflow-y-auto">
-            {items.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => selectItem(item)}
-                className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer transition-colors ${
-                  selectedItem?.id === item.id ? 'bg-emerald-50 border-r-4 border-r-emerald-600' : 'hover:bg-gray-50'
-                }`}
-              >
-                <span className="font-medium">{item.name}</span>
-                {item.type === 'provider' && (
-                  isScraper(item.provider_type)
-                    ? <Bot size={14} className="text-blue-600" />
-                    : <Wifi size={14} className="text-emerald-600" />
-                )}
-              </div>
-            ))}
+
+            {/* ── الجهات المربوطة ── */}
+            {items.some(i => i.type === 'provider' || i.type === 'bank') && (
+              <>
+                <div className="px-3 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border-b border-emerald-100">
+                  الجهات المربوطة (تلقائي)
+                </div>
+                {items.filter(i => i.type === 'provider' || i.type === 'bank').map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => selectItem(item)}
+                    className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer transition-colors ${
+                      selectedItem?.id === item.id ? 'bg-emerald-50 border-r-4 border-r-emerald-600' : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="font-medium">{item.name}</span>
+                    {item.type === 'bank'
+                      ? <Landmark size={14} className="text-blue-600" />
+                      : isScraper(item.provider_type)
+                        ? <Bot size={14} className="text-blue-600" />
+                        : <Wifi size={14} className="text-emerald-600" />
+                    }
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* ── البنود اليدوية ── */}
+            {items.some(i => i.type === 'manual') && (
+              <>
+                <div className="px-3 py-1.5 text-xs font-bold text-gray-400 bg-gray-50 border-b border-gray-100">
+                  البنود اليدوية
+                </div>
+                {items.filter(i => i.type === 'manual').map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => selectItem(item)}
+                    className={`flex items-center justify-between p-3 border-b border-gray-100 cursor-pointer transition-colors ${
+                      selectedItem?.id === item.id ? 'bg-emerald-50 border-r-4 border-r-emerald-600' : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <span className="font-medium">{item.name}</span>
+                  </div>
+                ))}
+              </>
+            )}
+
           </div>
         </div>
 
