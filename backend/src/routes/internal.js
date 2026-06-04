@@ -92,7 +92,27 @@ router.post('/whatsapp/start', async (req, res) => {
   const botUrl = process.env.BOT_URL || 'http://localhost:3100';
   const key = process.env.INTERNAL_API_KEY || '';
   try {
-    const r = await fetch(`${botUrl}/sessions/1/start`, {
+    const force = req.query.force === '1';
+    const r = await fetch(`${botUrl}/sessions/1/start${force ? '?force=1' : ''}`, {
+      method: 'POST',
+      headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /api/internal/whatsapp/reset
+ * مسح كامل لمجلد auth للجلسة + بدء جلسة جديدة (للجلسات العالقة)
+ */
+router.post('/whatsapp/reset', async (req, res) => {
+  const botUrl = process.env.BOT_URL || 'http://localhost:3100';
+  const key = process.env.INTERNAL_API_KEY || '';
+  try {
+    const r = await fetch(`${botUrl}/sessions/1/reset`, {
       method: 'POST',
       headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
     });

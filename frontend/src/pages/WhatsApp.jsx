@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare } from 'lucide-react';
+import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare, RotateCcw } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -75,6 +75,20 @@ export default function WhatsApp() {
     }
   };
 
+  const handleReset = async () => {
+    if (!confirm('إعادة ضبط الجلسة ستحذف بيانات الربط الحالية تماماً. الاستمرار؟')) return;
+    setStarting(true);
+    try {
+      const res = await api.post('/internal/whatsapp/reset');
+      setStatus(res.data);
+      toast.success('تمت إعادة الضبط — انتظر ظهور QR');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'فشلت إعادة الضبط');
+    } finally {
+      setStarting(false);
+    }
+  };
+
   const stateInfo = STATE_LABELS[status.state] || STATE_LABELS.idle;
 
   return (
@@ -134,6 +148,17 @@ export default function WhatsApp() {
             >
               <LogOut size={16} />
               قطع الاتصال
+            </button>
+          )}
+          {(status.state === 'connecting' || status.state === 'qr' || status.state === 'closed') && (
+            <button
+              onClick={handleReset}
+              disabled={starting}
+              className="flex items-center gap-2 bg-orange-50 hover:bg-orange-100 text-orange-600 px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50"
+              title="امسح بيانات الجلسة وابدأ من جديد"
+            >
+              <RotateCcw size={16} />
+              إعادة الضبط
             </button>
           )}
         </div>

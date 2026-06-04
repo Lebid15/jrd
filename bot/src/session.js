@@ -20,8 +20,17 @@ export class Session {
     this._onQR = null;         // callback للواجهة
   }
 
-  async start() {
-    if (this.state === 'connected' || this.state === 'connecting') return;
+  async start({ force = false } = {}) {
+    if (this.state === 'connected') return;
+    if (this.state === 'connecting' && !force) return;
+
+    // Tear down any existing socket before starting fresh
+    if (this.sock) {
+      try { this.sock.ev.removeAllListeners(); } catch {}
+      try { this.sock.end?.(); } catch {}
+      this.sock = null;
+    }
+    this.qrDataUrl = null;
     this.state = 'connecting';
 
     const { state, saveCreds } = await useEncryptedAuthState(this.authDir);
@@ -104,10 +113,26 @@ export class Session {
   async logout() {
     if (this.sock) {
       await this.sock.logout().catch(() => {});
+      try { this.sock.ev.removeAllListeners(); } catch {}
       this.sock = null;
     }
     this.state = 'closed';
     this.qrDataUrl = null;
+  }
+
+  async purgeAuth() {
+    const fs = await import('fs');
+    if (this.sock) {
+      try { this.sock.ev.removeAllListeners(); } catch {}
+      try { this.sock.end?.(); } catch {}
+      this.sock = null;
+    }
+    try {
+      fs.rmSync(this.authDir, { recursive: true, force: true });
+    } catch {}
+    this.state = 'idle';
+    this.qrDataUrl = null;
+    this.phoneNumber = null;
   }
 
   status() {

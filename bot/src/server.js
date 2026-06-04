@@ -1,7 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import { config } from './config.js';
-import { startSession, logoutSession, getSession, listSessions } from './sessionManager.js';
+import { startSession, logoutSession, resetSession, getSession, listSessions } from './sessionManager.js';
 
 const router = express.Router();
 
@@ -42,7 +42,17 @@ router.get('/sessions/:tenantId', (req, res) => {
 
 router.post('/sessions/:tenantId/start', async (req, res) => {
   try {
-    const session = await startSession(req.params.tenantId);
+    const force = req.query.force === '1' || req.body?.force === true;
+    const session = await startSession(req.params.tenantId, { force });
+    res.json(session.status());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/sessions/:tenantId/reset', async (req, res) => {
+  try {
+    const session = await resetSession(req.params.tenantId);
     res.json(session.status());
   } catch (e) {
     res.status(500).json({ error: e.message });

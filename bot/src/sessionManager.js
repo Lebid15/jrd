@@ -18,15 +18,22 @@ export function getOrCreateSession(tenantId) {
   return sessions.get(id);
 }
 
-export async function startSession(tenantId) {
+export async function startSession(tenantId, opts = {}) {
   const session = getOrCreateSession(tenantId);
-  await session.start();
+  await session.start(opts);
   return session;
 }
 
 export async function logoutSession(tenantId) {
   const session = getSession(tenantId);
   if (session) await session.logout();
+}
+
+export async function resetSession(tenantId) {
+  const session = getOrCreateSession(tenantId);
+  await session.purgeAuth();
+  await session.start({ force: true });
+  return session;
 }
 
 export function listSessions() {
