@@ -236,13 +236,15 @@ export default function Dashboard() {
                   </td>
                   <td className="py-2 px-1 md:px-4 text-center">
                     <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={() => fetchSingleBalance(item.id)}
-                        className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded"
-                        title="جلب الرصيد"
-                      >
-                        <RefreshCw size={15} />
-                      </button>
+                      {item.type !== 'bank' && (
+                        <button
+                          onClick={() => fetchSingleBalance(item.id)}
+                          className="p-1 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded"
+                          title="جلب الرصيد"
+                        >
+                          <RefreshCw size={15} />
+                        </button>
+                      )}
                       <button
                         onClick={() => deleteItem(item.id, item.name)}
                         className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
