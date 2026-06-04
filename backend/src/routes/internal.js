@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import db from '../database.js';
+import { parseMessage, computeDelta, isAdminName } from '../whatsappParser.js';
 
 const router = Router();
 
@@ -45,6 +46,50 @@ function isGroupAllowed(groupName) {
   return list.some(g => normalizeName(g) === n);
 }
 
+// ─── Helpers: قراءة الكلمات المفتاحية من جدول settings ──────────────────────
+const KW_KEYS = {
+  us: 'whatsapp_kw_us',
+  them: 'whatsapp_kw_them',
+  try: 'whatsapp_kw_try',
+  usd: 'whatsapp_kw_usd',
+  ignore: 'whatsapp_kw_ignore',
+};
+
+function getKeywords() {
+  const out = { us: [], them: [], try: [], usd: [], ignore: [] };
+  for (const [k, key] of Object.entries(KW_KEYS)) {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    if (row) {
+      try {
+        const arr = JSON.parse(row.value);
+        if (Array.isArray(arr)) out[k] = arr;
+      } catch {}
+    }
+  }
+  return out;
+}
+
+function getAdminToken() {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('whatsapp_admin_token');
+  return row?.value || 'admin';
+}
+
+// ─── يبحث عن أوّل بند مربوط بمجموعة (بالاسم) ─────────────────────────────────
+function findItemByGroupName(groupName) {
+  const n = normalizeName(groupName);
+  if (!n) return null;
+  const rows = db.prepare(`
+    SELECT ac.item_id, ac.whatsapp_group_name, i.name as item_name
+    FROM api_configs ac
+    JOIN items i ON i.id = ac.item_id
+    WHERE ac.provider_type = 'whatsapp_group' AND i.is_active = 1
+  `).all();
+  for (const r of rows) {
+    if (normalizeName(r.whatsapp_group_name) === n) return r;
+  }
+  return null;
+}
+
 // ingest فقط يحتاج auth (يُستدعى من البوت)
 router.post('/ingest', internalAuth, (req, res) => {
   const { tenant_id, group_id, group_name, sender, sender_name, message_id, text, is_group } = req.body;
@@ -55,7 +100,8 @@ router.post('/ingest', internalAuth, (req, res) => {
     return res.json({ ok: true, filtered: true });
   }
 
-  db.prepare(`
+  // 1) حفظ الرسالة الخام (للأرشيف والمراجعة)
+  const info = db.prepare(`
     INSERT OR IGNORE INTO whatsapp_messages
       (tenant_id, group_id, group_name, sender, sender_name, message_id, text, is_group)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -70,7 +116,70 @@ router.post('/ingest', internalAuth, (req, res) => {
     is_group ? 1 : 0
   );
 
-  res.json({ ok: true });
+  // لو الرسالة مكرّرة (INSERT OR IGNORE لم يُدخِل)، اخرج
+  if (!info.changes) return res.json({ ok: true, duplicate: true });
+  const dbMessageId = info.lastInsertRowid;
+
+  // 2) محاولة ربط المجموعة ببند (whatsapp_group provider)
+  const link = findItemByGroupName(group_name);
+  if (!link) return res.json({ ok: true, no_item_linked: true });
+
+  // 3) تحليل النصّ
+  const parsed = parseMessage(text, getKeywords());
+  if (!parsed || parsed.ignored) {
+    return res.json({ ok: true, parsed: parsed || null, applied: false });
+  }
+
+  // 4) تحديد المصدر (us / them) من اسم المرسل
+  const adminToken = getAdminToken();
+  const source = isAdminName(sender_name, adminToken) ? 'us' : 'them';
+
+  // 5) حساب الـ delta وتطبيقه على current_values
+  const delta = computeDelta({ ...parsed, source });
+  const field = parsed.currency === 'USD' ? 'usd_amount' : 'try_amount';
+
+  const cv = db.prepare('SELECT id, try_amount, usd_amount FROM current_values WHERE item_id = ?').get(link.item_id);
+  let balanceAfter;
+  if (cv) {
+    const current = parsed.currency === 'USD' ? (cv.usd_amount || 0) : (cv.try_amount || 0);
+    balanceAfter = current + delta;
+    db.prepare(`UPDATE current_values SET ${field} = ? WHERE item_id = ?`)
+      .run(balanceAfter, link.item_id);
+  } else {
+    balanceAfter = delta;
+    db.prepare(`INSERT INTO current_values (item_id, ${field}) VALUES (?, ?)`)
+      .run(link.item_id, balanceAfter);
+  }
+
+  // 6) حفظ سجل العملية
+  db.prepare(`
+    INSERT INTO whatsapp_transactions
+      (item_id, message_id, source, direction, currency, amount, delta, balance_after, raw_text, sender_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    link.item_id,
+    dbMessageId,
+    source,
+    parsed.direction,
+    parsed.currency,
+    parsed.amount,
+    delta,
+    balanceAfter,
+    text,
+    sender_name || ''
+  );
+
+  res.json({
+    ok: true,
+    applied: true,
+    item_id: link.item_id,
+    source,
+    direction: parsed.direction,
+    currency: parsed.currency,
+    amount: parsed.amount,
+    delta,
+    balance_after: balanceAfter,
+  });
 });
 
 /**
@@ -238,6 +347,66 @@ router.get('/whatsapp/all-groups', async (req, res) => {
   } catch {
     res.json([]);
   }
+});
+
+/**
+ * GET /api/internal/whatsapp/keywords
+ * كل قوائم الكلمات + الرمز الإداري (admin token)
+ */
+router.get('/whatsapp/keywords', (req, res) => {
+  res.json({
+    us: getKeywords().us,
+    them: getKeywords().them,
+    try: getKeywords().try,
+    usd: getKeywords().usd,
+    ignore: getKeywords().ignore,
+    admin_token: getAdminToken(),
+  });
+});
+
+/**
+ * PUT /api/internal/whatsapp/keywords
+ * body: { us:[], them:[], try:[], usd:[], ignore:[], admin_token:'admin' }
+ */
+router.put('/whatsapp/keywords', (req, res) => {
+  const upsert = db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `);
+  const cleanArr = (a) => Array.isArray(a) ? a.map(s => String(s || '').trim()).filter(Boolean) : null;
+
+  const fields = { us: KW_KEYS.us, them: KW_KEYS.them, try: KW_KEYS.try, usd: KW_KEYS.usd, ignore: KW_KEYS.ignore };
+  for (const [k, settingKey] of Object.entries(fields)) {
+    const arr = cleanArr(req.body?.[k]);
+    if (arr) upsert.run(settingKey, JSON.stringify(arr));
+  }
+  if (req.body?.admin_token && typeof req.body.admin_token === 'string') {
+    upsert.run('whatsapp_admin_token', req.body.admin_token.trim() || 'admin');
+  }
+  res.json({ ok: true });
+});
+
+/**
+ * GET /api/internal/whatsapp/transactions?item_id=...&limit=50
+ * سجلّ العمليات المُحلَّلة لبند معيّن
+ */
+router.get('/whatsapp/transactions', (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 50, 500);
+  const itemId = req.query.item_id;
+  let rows;
+  if (itemId) {
+    rows = db.prepare(`
+      SELECT * FROM whatsapp_transactions WHERE item_id = ?
+      ORDER BY id DESC LIMIT ?
+    `).all(itemId, limit);
+  } else {
+    rows = db.prepare(`
+      SELECT t.*, i.name as item_name FROM whatsapp_transactions t
+      LEFT JOIN items i ON i.id = t.item_id
+      ORDER BY t.id DESC LIMIT ?
+    `).all(limit);
+  }
+  res.json(rows);
 });
 
 export default router;

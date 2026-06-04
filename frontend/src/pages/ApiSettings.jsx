@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Plus, Save, Trash2, Wifi, TestTube, Bot, Landmark } from 'lucide-react';
+import { Settings, Plus, Save, Trash2, Wifi, TestTube, Bot, Landmark, MessageSquare } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -9,6 +9,7 @@ const PROVIDER_TYPES = [
   { value: 'murat_temiz', label: 'Murat Temiz', fields: ['base_url', 'kod', 'sifre'] },
   { value: 'smm_panel', label: 'SMM Panel (متابعين/مشاهدات)', fields: ['base_url', 'api_token'] },
   { value: 'bayi_alayatl', label: 'روبوت موقع Bayi Alayatl', fields: ['base_url', 'kod', 'sifre'] },
+  { value: 'whatsapp_group', label: '💬 مجموعة واتساب (لنا/لكم تلقائي)', fields: ['whatsapp_group_name'] },
   { value: 'kuveyt_turk', label: '🏦 كويت ترك (بنك — SMS تلقائي)', fields: [] },
 ];
 
@@ -25,8 +26,10 @@ export default function ApiSettings() {
     api_token: '',
     kod: '',
     sifre: '',
+    whatsapp_group_name: '',
   });
   const [testing, setTesting] = useState(false);
+  const [allowedGroups, setAllowedGroups] = useState([]);
 
   const load = async () => {
     try {
@@ -39,13 +42,20 @@ export default function ApiSettings() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  const loadAllowedGroups = async () => {
+    try {
+      const res = await api.get('/internal/whatsapp/allowed-groups');
+      setAllowedGroups(res.data.groups || []);
+    } catch {}
+  };
+
+  useEffect(() => { load(); loadAllowedGroups(); }, []);
 
   const selectItem = async (item) => {
     setSelectedItem(item);
     // إذا كان البند من نوع bank، نضبط مباشرة بدون استدعاء api_configs
     if (item.type === 'bank') {
-      setConfig({ provider_type: 'kuveyt_turk', base_url: '', api_token: '', kod: '', sifre: '' });
+      setConfig({ provider_type: 'kuveyt_turk', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
       return;
     }
     try {
@@ -57,12 +67,13 @@ export default function ApiSettings() {
           api_token: res.data.api_token || '',
           kod: res.data.kod || '',
           sifre: res.data.sifre || '',
+          whatsapp_group_name: res.data.whatsapp_group_name || '',
         });
       } else {
-        setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '' });
+        setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
       }
     } catch {
-      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '' });
+      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
     }
   };
 
@@ -75,6 +86,10 @@ export default function ApiSettings() {
         setSelectedItem(prev => ({ ...prev, type: 'bank' }));
         toast.success('تم ضبط البند كحساب بنكي ✅');
       } else {
+        if (config.provider_type === 'whatsapp_group' && !config.whatsapp_group_name) {
+          toast.error('اختر مجموعة واتساب أولاً');
+          return;
+        }
         await api.put(`/items/${selectedItem.id}`, { type: 'provider' });
         await api.put(`/configs/${selectedItem.id}`, config);
         setSelectedItem(prev => ({ ...prev, type: 'provider' }));
@@ -106,7 +121,7 @@ export default function ApiSettings() {
       await api.delete(`/configs/${selectedItem.id}`);
       toast.success('تم إزالة الإعدادات');
       setSelectedItem(null);
-      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '' });
+      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
       load();
     } catch {
       toast.error('خطأ');
@@ -144,9 +159,11 @@ export default function ApiSettings() {
                     <span className="font-medium">{item.name}</span>
                     {item.type === 'bank'
                       ? <Landmark size={14} className="text-blue-600" />
-                      : isScraper(item.provider_type)
-                        ? <Bot size={14} className="text-blue-600" />
-                        : <Wifi size={14} className="text-emerald-600" />
+                      : item.provider_type === 'whatsapp_group'
+                        ? <MessageSquare size={14} className="text-green-600" />
+                        : isScraper(item.provider_type)
+                          ? <Bot size={14} className="text-blue-600" />
+                          : <Wifi size={14} className="text-emerald-600" />
                     }
                   </div>
                 ))}
@@ -224,8 +241,43 @@ export default function ApiSettings() {
                 </div>
               )}
 
-              {/* Base URL — مخفي لكويت ترك */}
-              {config.provider_type !== 'kuveyt_turk' && (
+              {/* بطاقة مجموعة واتساب */}
+              {config.provider_type === 'whatsapp_group' && (
+                <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-xl text-sm text-green-900" dir="rtl">
+                  <p className="font-bold text-base mb-2 flex items-center gap-2">
+                    <MessageSquare size={18} className="text-green-600" />
+                    ربط بمجموعة واتساب
+                  </p>
+                  <p className="mb-3 text-green-800">
+                    ستستخرج من رسائل المجموعة عبارات مثل <b>"لنا 500 تركي"</b> أو <b>"لكم 100 دولار"</b>،
+                    وتُعدّل رصيد البند بالليرة أو بالدولار تلقائياً.
+                  </p>
+                  <label className="block text-sm font-medium mb-1">اختر المجموعة</label>
+                  {allowedGroups.length === 0 ? (
+                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+                      ⚠️ لا توجد مجموعات مضافة بعد. اذهب إلى صفحة <b>بوت واتساب</b> وأضف المجموعات أولاً.
+                    </div>
+                  ) : (
+                    <select
+                      value={config.whatsapp_group_name}
+                      onChange={(e) => setConfig({ ...config, whatsapp_group_name: e.target.value })}
+                      className="w-full border border-green-300 rounded-lg px-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-green-400"
+                    >
+                      <option value="">-- اختر مجموعة --</option>
+                      {allowedGroups.map(g => (
+                        <option key={g} value={g}>{g}</option>
+                      ))}
+                    </select>
+                  )}
+                  <p className="mt-3 text-xs text-green-700">
+                    💡 رسائلك تُعرَف بوجود أحرف <code className="bg-green-100 px-1 rounded">admin</code> في اسمك على الواتساب.
+                    الرسائل التي تحوي كلمة "مطابقة" تُتجاهَل تلقائياً.
+                  </p>
+                </div>
+              )}
+
+              {/* Base URL — مخفي لكويت ترك ولمجموعة الواتساب */}
+              {config.provider_type !== 'kuveyt_turk' && config.provider_type !== 'whatsapp_group' && (
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">رابط الموقع (Base URL)</label>
                 <input
@@ -318,14 +370,16 @@ export default function ApiSettings() {
                   <Save size={18} />
                   حفظ الإعدادات
                 </button>
-                <button
-                  onClick={testConnection}
-                  disabled={testing}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  <TestTube size={18} className={testing ? 'animate-pulse' : ''} />
-                  اختبار
-                </button>
+                {config.provider_type !== 'kuveyt_turk' && config.provider_type !== 'whatsapp_group' && (
+                  <button
+                    onClick={testConnection}
+                    disabled={testing}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    <TestTube size={18} className={testing ? 'animate-pulse' : ''} />
+                    اختبار
+                  </button>
+                )}
               </div>
             </div>
           ) : (

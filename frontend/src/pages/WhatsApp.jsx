@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare, RotateCcw, Plus, X, Users, Check } from 'lucide-react';
+import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare, RotateCcw, Plus, X, Users, Check, Tags, Save } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -22,6 +22,10 @@ export default function WhatsApp() {
   const [newGroupName, setNewGroupName] = useState('');
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [savingGroups, setSavingGroups] = useState(false);
+
+  // الكلمات المفتاحية
+  const [keywords, setKeywords] = useState({ us: [], them: [], try: [], usd: [], ignore: [], admin_token: 'admin' });
+  const [kwSaving, setKwSaving] = useState(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -88,6 +92,37 @@ export default function WhatsApp() {
     saveAllowedGroups(allowedGroups.filter(g => g !== name));
   };
 
+  const loadKeywords = useCallback(async () => {
+    try {
+      const res = await api.get('/internal/whatsapp/keywords');
+      setKeywords({
+        us: res.data.us || [],
+        them: res.data.them || [],
+        try: res.data.try || [],
+        usd: res.data.usd || [],
+        ignore: res.data.ignore || [],
+        admin_token: res.data.admin_token || 'admin',
+      });
+    } catch {}
+  }, []);
+
+  const saveKeywords = async () => {
+    setKwSaving(true);
+    try {
+      await api.put('/internal/whatsapp/keywords', keywords);
+      toast.success('تم حفظ الكلمات المفتاحية');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'فشل الحفظ');
+    } finally {
+      setKwSaving(false);
+    }
+  };
+
+  const updateKwList = (key, value) => {
+    const arr = String(value || '').split(/[,،\n]+/).map(s => s.trim()).filter(Boolean);
+    setKeywords(prev => ({ ...prev, [key]: arr }));
+  };
+
   useEffect(() => {
     loadStatus();
     loadMessages();
@@ -103,8 +138,9 @@ export default function WhatsApp() {
     if (status.state === 'connected') {
       loadMessages();
       loadAllowedGroups();
+      loadKeywords();
     }
-  }, [status.state, loadMessages, loadAllowedGroups]);
+  }, [status.state, loadMessages, loadAllowedGroups, loadKeywords]);
 
   const handleStart = async () => {
     setStarting(true);
@@ -310,6 +346,84 @@ export default function WhatsApp() {
         </div>
       )}
 
+      {/* ─── الكلمات المفتاحية ─── */}
+      {status.state === 'connected' && (
+        <div className="bg-white rounded-2xl shadow border border-gray-100 p-5 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-gray-700 flex items-center gap-2">
+              <Tags size={18} className="text-purple-600" />
+              الكلمات المفتاحية
+            </h2>
+            <button
+              onClick={saveKeywords}
+              disabled={kwSaving}
+              className="flex items-center gap-1 bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm font-bold disabled:opacity-50"
+            >
+              <Save size={14} />
+              {kwSaving ? 'جارٍ الحفظ...' : 'حفظ'}
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-500 mb-4">
+            افصل بين الكلمات بفاصلة أو سطر جديد. غير حسّاس لحالة الأحرف.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <KwField
+              label="مرادفات «لنا»"
+              hint="عند ورود إحداها → عملية وارد لنا"
+              color="green"
+              value={keywords.us.join('، ')}
+              onChange={v => updateKwList('us', v)}
+            />
+            <KwField
+              label="مرادفات «لكم»"
+              hint="عند ورود إحداها → عملية صادر لكم"
+              color="blue"
+              value={keywords.them.join('، ')}
+              onChange={v => updateKwList('them', v)}
+            />
+            <KwField
+              label="مرادفات الليرة التركية"
+              hint="تركي، tl، ليرة ..."
+              color="orange"
+              value={keywords.try.join('، ')}
+              onChange={v => updateKwList('try', v)}
+            />
+            <KwField
+              label="مرادفات الدولار"
+              hint="دولار، usd، dolar ..."
+              color="emerald"
+              value={keywords.usd.join('، ')}
+              onChange={v => updateKwList('usd', v)}
+            />
+            <KwField
+              label="كلمات التجاهل"
+              hint="أيّ رسالة تحوي إحدى هذه الكلمات تُتجاهَل"
+              color="red"
+              value={keywords.ignore.join('، ')}
+              onChange={v => updateKwList('ignore', v)}
+            />
+            <div>
+              <label className="block text-xs font-semibold text-gray-700 mb-1">
+                رمز المسؤول (admin token)
+              </label>
+              <p className="text-[11px] text-gray-500 mb-1">
+                أيّ مرسل يحتوي اسمه على هذه الأحرف <b>بالترتيب</b> = نحن
+              </p>
+              <input
+                type="text"
+                value={keywords.admin_token}
+                onChange={e => setKeywords(prev => ({ ...prev, admin_token: e.target.value }))}
+                placeholder="admin"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400"
+                dir="ltr"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ─── آخر الرسائل ─── */}
       {messages.length > 0 && (
         <div className="bg-white rounded-2xl shadow border border-gray-100">
@@ -356,6 +470,30 @@ export default function WhatsApp() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function KwField({ label, hint, color = 'gray', value, onChange }) {
+  const colors = {
+    green:   'border-green-200 focus:border-green-400',
+    blue:    'border-blue-200 focus:border-blue-400',
+    orange:  'border-orange-200 focus:border-orange-400',
+    emerald: 'border-emerald-200 focus:border-emerald-400',
+    red:     'border-red-200 focus:border-red-400',
+    gray:    'border-gray-200 focus:border-gray-400',
+  };
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-700 mb-1">{label}</label>
+      {hint && <p className="text-[11px] text-gray-500 mb-1">{hint}</p>}
+      <textarea
+        rows={2}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none ${colors[color] || colors.gray}`}
+        dir="auto"
+      />
     </div>
   );
 }

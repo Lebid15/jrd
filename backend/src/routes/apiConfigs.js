@@ -12,7 +12,7 @@ router.get('/:itemId', (req, res) => {
 
 // Save/update API config for an item
 router.put('/:itemId', (req, res) => {
-  const { provider_type, base_url, api_token, kod, sifre } = req.body;
+  const { provider_type, base_url, api_token, kod, sifre, whatsapp_group_name } = req.body;
   const itemId = req.params.itemId;
 
   // Also update the item's type and provider_type
@@ -22,14 +22,14 @@ router.put('/:itemId', (req, res) => {
   const existing = db.prepare('SELECT id FROM api_configs WHERE item_id = ?').get(itemId);
   if (existing) {
     db.prepare(`
-      UPDATE api_configs SET provider_type = ?, base_url = ?, api_token = ?, kod = ?, sifre = ?
+      UPDATE api_configs SET provider_type = ?, base_url = ?, api_token = ?, kod = ?, sifre = ?, whatsapp_group_name = ?
       WHERE item_id = ?
-    `).run(provider_type, base_url || '', api_token || '', kod || '', sifre || '', itemId);
+    `).run(provider_type, base_url || '', api_token || '', kod || '', sifre || '', whatsapp_group_name || '', itemId);
   } else {
     db.prepare(`
-      INSERT INTO api_configs (item_id, provider_type, base_url, api_token, kod, sifre)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(itemId, provider_type, base_url || '', api_token || '', kod || '', sifre || '');
+      INSERT INTO api_configs (item_id, provider_type, base_url, api_token, kod, sifre, whatsapp_group_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(itemId, provider_type, base_url || '', api_token || '', kod || '', sifre || '', whatsapp_group_name || '');
   }
 
   res.json({ success: true });

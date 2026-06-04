@@ -104,12 +104,41 @@ db.exec(`
     is_group INTEGER DEFAULT 1,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS whatsapp_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+    message_id INTEGER REFERENCES whatsapp_messages(id) ON DELETE SET NULL,
+    source TEXT NOT NULL CHECK(source IN ('us','them')),
+    direction TEXT NOT NULL CHECK(direction IN ('lana','lakum')),
+    currency TEXT NOT NULL CHECK(currency IN ('TRY','USD')),
+    amount REAL NOT NULL,
+    delta REAL NOT NULL,
+    balance_after REAL DEFAULT 0,
+    raw_text TEXT DEFAULT '',
+    sender_name TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
-// Default settings
-const existingRate = db.prepare('SELECT value FROM settings WHERE key = ?').get('exchange_rate');
-if (!existingRate) {
-  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run('exchange_rate', '44.75');
+// ─── Migration: add whatsapp_group_name column to api_configs ────────────────
+const cols = db.prepare("PRAGMA table_info(api_configs)").all().map(c => c.name);
+if (!cols.includes('whatsapp_group_name')) {
+  db.exec(`ALTER TABLE api_configs ADD COLUMN whatsapp_group_name TEXT DEFAULT ''`);
 }
+
+// ─── Default settings ────────────────────────────────────────────────────────
+const seedSetting = (key, val) => {
+  const exists = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key);
+  if (!exists) db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(key, val);
+};
+
+seedSetting('exchange_rate', '44.75');
+seedSetting('whatsapp_kw_us',     JSON.stringify(['لنا', 'النا', 'لينا', 'علينا']));
+seedSetting('whatsapp_kw_them',   JSON.stringify(['لكم', 'لكن', 'عليكم', 'عليك']));
+seedSetting('whatsapp_kw_try',    JSON.stringify(['تركي', 'تركى', 'تركية', 'ليرة', 'لير', 'تل', 'tl', 'try', 'lira', '₺']));
+seedSetting('whatsapp_kw_usd',    JSON.stringify(['دولار', 'دولر', 'دلار', 'usd', 'usdt', 'dolar', 'dollar', 'doler', '$']));
+seedSetting('whatsapp_kw_ignore', JSON.stringify(['مطابقة', 'مطابق', 'تطابق', 'match']));
+seedSetting('whatsapp_admin_token', 'admin');
 
 export default db;
