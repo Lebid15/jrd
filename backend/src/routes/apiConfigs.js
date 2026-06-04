@@ -35,11 +35,25 @@ router.put('/:itemId', (req, res) => {
   res.json({ success: true });
 });
 
+// أنواع تُحدَّث من مصدر خارجي (واتساب / SMS بنك) — لا داعي لجلبها
+const PASSIVE_TYPES = new Set(['whatsapp_group', 'kuveyt_turk']);
+
 // Fetch balance for a single provider item
 router.post('/:itemId/fetch', async (req, res) => {
   try {
     const config = db.prepare('SELECT * FROM api_configs WHERE item_id = ?').get(req.params.itemId);
     if (!config) return res.status(404).json({ error: 'No API config found' });
+
+    if (PASSIVE_TYPES.has(config.provider_type)) {
+      const cv = db.prepare('SELECT try_amount, usd_amount FROM current_values WHERE item_id = ?').get(req.params.itemId);
+      return res.json({
+        balance: cv?.try_amount ?? 0,
+        usd_amount: cv?.usd_amount ?? 0,
+        currency: 'TRY',
+        passive: true,
+        message: 'هذا البند يُحدَّث تلقائياً من المصدر الخارجي (واتساب / بنك).',
+      });
+    }
 
     const result = await fetchBalance(config.provider_type, config, { itemId: req.params.itemId });
     const roundedValue = Math.round(result.value * 100) / 100;
@@ -71,6 +85,10 @@ router.post('/fetch-all', async (req, res) => {
   const results = [];
   for (const config of configs) {
     try {
+      if (PASSIVE_TYPES.has(config.provider_type)) {
+        results.push({ item_id: config.item_id, name: config.item_name, passive: true, success: true });
+        continue;
+      }
       const result = await fetchBalance(config.provider_type, config, { itemId: config.item_id });
       const roundedValue = Math.round(result.value * 100) / 100;
       const isUsd = result.currency === 'USD';
