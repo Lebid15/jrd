@@ -424,6 +424,11 @@ export default function WhatsApp() {
         </div>
       )}
 
+      {/* ─── أداة اختبار المحلّل ─── */}
+      {status.state === 'connected' && (
+        <ParserTester allowedGroups={allowedGroups} adminToken={keywords.admin_token} />
+      )}
+
       {/* ─── آخر الرسائل ─── */}
       {messages.length > 0 && (
         <div className="bg-white rounded-2xl shadow border border-gray-100">
@@ -494,6 +499,113 @@ function KwField({ label, hint, color = 'gray', value, onChange }) {
         className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none ${colors[color] || colors.gray}`}
         dir="auto"
       />
+    </div>
+  );
+}
+
+function ParserTester({ allowedGroups }) {
+  const [text, setText] = useState('لنا 500 تركي');
+  const [senderName, setSenderName] = useState('');
+  const [groupName, setGroupName] = useState(allowedGroups[0] || '');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!groupName && allowedGroups[0]) setGroupName(allowedGroups[0]);
+  }, [allowedGroups, groupName]);
+
+  const run = async () => {
+    setLoading(true);
+    try {
+      const res = await api.post('/internal/whatsapp/preview-parse', {
+        text,
+        sender_name: senderName,
+        group_name: groupName,
+      });
+      setResult(res.data);
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'فشل الاختبار');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const Row = ({ label, value, ok }) => (
+    <div className="flex items-center justify-between py-1 text-sm">
+      <span className="text-gray-600">{label}</span>
+      <span className={`font-mono text-xs ${ok === true ? 'text-green-700' : ok === false ? 'text-red-600' : 'text-gray-700'}`}>
+        {value == null || value === '' ? '—' : String(value)}
+      </span>
+    </div>
+  );
+
+  return (
+    <div className="bg-white rounded-2xl shadow border border-gray-100 p-5 mb-6">
+      <h2 className="font-bold text-gray-700 flex items-center gap-2 mb-3">
+        🧪 اختبار المحلّل (تشخيص)
+      </h2>
+      <p className="text-xs text-gray-500 mb-3">
+        اكتب رسالة + اسم المرسل + المجموعة لترى كيف سيتعامل النظام معها — بدون إرسال فعلي.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <input
+          type="text"
+          value={text}
+          onChange={e => setText(e.target.value)}
+          placeholder="نصّ الرسالة"
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400"
+          dir="auto"
+        />
+        <input
+          type="text"
+          value={senderName}
+          onChange={e => setSenderName(e.target.value)}
+          placeholder="اسم المرسل (مثلاً: Lebid Admin أو Mohamed)"
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400"
+          dir="auto"
+        />
+        <select
+          value={groupName}
+          onChange={e => setGroupName(e.target.value)}
+          className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400"
+        >
+          <option value="">-- اختر مجموعة --</option>
+          {allowedGroups.map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+        <button
+          onClick={run}
+          disabled={loading || !text}
+          className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50"
+        >
+          {loading ? 'جارٍ...' : 'اختبار'}
+        </button>
+      </div>
+
+      {result && (
+        <div className="mt-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+          <Row label="المجموعة معتمدة؟" value={result.group_allowed ? '✓' : '✗'} ok={!!result.group_allowed} />
+          <Row label="مربوطة ببند" value={result.linked_item?.item_name || '—'} ok={!!result.linked_item} />
+          <Row label="المصدر (من الاسم)" value={result.source === 'us' ? 'نحن (admin)' : 'هم'} />
+          <Row label="نتيجة التحليل" value={result.parsed ? (result.parsed.ignored ? 'متجاهَلة: ' + result.parsed.reason : `${result.parsed.direction} | ${result.parsed.currency} | ${result.parsed.amount}`) : '✗ لم يُستخرَج شيء'} ok={!!result.parsed && !result.parsed.ignored} />
+          <Row label="التغيير على الرصيد (delta)" value={result.delta != null ? (result.delta > 0 ? `+${result.delta}` : result.delta) : '—'} />
+          {!result.group_allowed && (
+            <p className="text-xs text-red-600 mt-2">
+              💡 المجموعة المختارة ليست في قائمة المعتمدة. القائمة الحالية: {result.allowed_groups.join('، ') || '(فارغة)'}
+            </p>
+          )}
+          {result.group_allowed && !result.linked_item && (
+            <p className="text-xs text-red-600 mt-2">
+              💡 لا يوجد بند مربوط بهذه المجموعة. اذهب إلى إعدادات API واختر نوع "مجموعة واتساب" لبند، ثم اختر هذه المجموعة.
+            </p>
+          )}
+          {result.linked_item && !result.parsed && (
+            <p className="text-xs text-orange-600 mt-2">
+              💡 الرسالة لا تحوي كلمات كافية (تحتاج: لنا/لكم + عملة + رقم). راجع الكلمات المفتاحية أعلاه.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

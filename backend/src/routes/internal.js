@@ -95,9 +95,20 @@ router.post('/ingest', internalAuth, (req, res) => {
   const { tenant_id, group_id, group_name, sender, sender_name, message_id, text, is_group } = req.body;
   if (!text || !group_id) return res.status(400).json({ error: 'text and group_id required' });
 
+  const log = (decision, extra = {}) => {
+    console.log('[ingest]', JSON.stringify({
+      group_name, sender_name, text: text.slice(0, 80), decision, ...extra,
+    }));
+  };
+
   // فلترة: نقبل فقط رسائل المجموعات من القائمة المعتمدة
-  if (!is_group || !isGroupAllowed(group_name)) {
-    return res.json({ ok: true, filtered: true });
+  if (!is_group) {
+    log('skipped_not_group');
+    return res.json({ ok: true, filtered: true, reason: 'not_group' });
+  }
+  if (!isGroupAllowed(group_name)) {
+    log('skipped_group_not_allowed', { allowed_list: getAllowedGroups() });
+    return res.json({ ok: true, filtered: true, reason: 'group_not_in_allowed_list' });
   }
 
   // 1) حفظ الرسالة الخام (للأرشيف والمراجعة)
@@ -122,12 +133,20 @@ router.post('/ingest', internalAuth, (req, res) => {
 
   // 2) محاولة ربط المجموعة ببند (whatsapp_group provider)
   const link = findItemByGroupName(group_name);
-  if (!link) return res.json({ ok: true, no_item_linked: true });
+  if (!link) {
+    log('no_item_linked');
+    return res.json({ ok: true, no_item_linked: true });
+  }
 
   // 3) تحليل النصّ
   const parsed = parseMessage(text, getKeywords());
-  if (!parsed || parsed.ignored) {
-    return res.json({ ok: true, parsed: parsed || null, applied: false });
+  if (!parsed) {
+    log('parse_failed_no_match');
+    return res.json({ ok: true, parsed: null, applied: false });
+  }
+  if (parsed.ignored) {
+    log('parse_ignored', { reason: parsed.reason });
+    return res.json({ ok: true, parsed, applied: false });
   }
 
   // 4) تحديد المصدر (us / them) من اسم المرسل
@@ -169,6 +188,8 @@ router.post('/ingest', internalAuth, (req, res) => {
     sender_name || ''
   );
 
+  log('applied', { item: link.item_name, source, ...parsed, delta, balance_after: balanceAfter });
+
   res.json({
     ok: true,
     applied: true,
@@ -179,6 +200,33 @@ router.post('/ingest', internalAuth, (req, res) => {
     amount: parsed.amount,
     delta,
     balance_after: balanceAfter,
+  });
+});
+
+/**
+ * POST /api/internal/whatsapp/preview-parse
+ * اختبار محلّل الرسائل بدون حفظ. body: { text, sender_name?, group_name? }
+ */
+router.post('/whatsapp/preview-parse', (req, res) => {
+  const { text, sender_name, group_name } = req.body || {};
+  if (!text) return res.status(400).json({ error: 'text required' });
+  const keywords = getKeywords();
+  const parsed = parseMessage(text, keywords);
+  const source = isAdminName(sender_name, getAdminToken()) ? 'us' : 'them';
+  const delta = parsed && !parsed.ignored ? computeDelta({ ...parsed, source }) : null;
+  const link = group_name ? findItemByGroupName(group_name) : null;
+  res.json({
+    text,
+    sender_name: sender_name || null,
+    group_name: group_name || null,
+    keywords,
+    admin_token: getAdminToken(),
+    parsed,
+    source,
+    delta,
+    linked_item: link || null,
+    group_allowed: group_name ? isGroupAllowed(group_name) : null,
+    allowed_groups: getAllowedGroups(),
   });
 });
 
