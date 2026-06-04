@@ -64,6 +64,13 @@ router.post('/sessions/:tenantId/logout', async (req, res) => {
   res.json({ success: true });
 });
 
+router.get('/sessions/:tenantId/groups', async (req, res) => {
+  const session = getSession(req.params.tenantId);
+  if (!session) return res.status(404).json({ error: 'Not found' });
+  const groups = await session.listGroups();
+  res.json(groups);
+});
+
 export default router;
 
 export { authMiddleware };

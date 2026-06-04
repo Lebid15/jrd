@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare, RotateCcw } from 'lucide-react';
+import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare, RotateCcw, Plus, X, Users, Check } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -17,6 +17,11 @@ export default function WhatsApp() {
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
+  const [allowedGroups, setAllowedGroups] = useState([]);
+  const [waGroups, setWaGroups] = useState([]);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [loadingGroups, setLoadingGroups] = useState(false);
+  const [savingGroups, setSavingGroups] = useState(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -36,6 +41,53 @@ export default function WhatsApp() {
     } catch {}
   }, []);
 
+  const loadAllowedGroups = useCallback(async () => {
+    try {
+      const res = await api.get('/internal/whatsapp/allowed-groups');
+      setAllowedGroups(res.data.groups || []);
+    } catch {}
+  }, []);
+
+  const loadWaGroups = useCallback(async () => {
+    setLoadingGroups(true);
+    try {
+      const res = await api.get('/internal/whatsapp/all-groups');
+      setWaGroups(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setWaGroups([]);
+    } finally {
+      setLoadingGroups(false);
+    }
+  }, []);
+
+  const saveAllowedGroups = async (groups) => {
+    setSavingGroups(true);
+    try {
+      const res = await api.put('/internal/whatsapp/allowed-groups', { groups });
+      setAllowedGroups(res.data.groups || []);
+      toast.success('تم الحفظ');
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'فشل الحفظ');
+    } finally {
+      setSavingGroups(false);
+    }
+  };
+
+  const addGroup = (name) => {
+    const n = String(name || '').trim();
+    if (!n) return;
+    if (allowedGroups.some(g => g.toLowerCase() === n.toLowerCase())) {
+      toast.info('المجموعة مضافة مسبقاً');
+      return;
+    }
+    saveAllowedGroups([...allowedGroups, n]);
+    setNewGroupName('');
+  };
+
+  const removeGroup = (name) => {
+    saveAllowedGroups(allowedGroups.filter(g => g !== name));
+  };
+
   useEffect(() => {
     loadStatus();
     loadMessages();
@@ -48,8 +100,11 @@ export default function WhatsApp() {
 
   // لما تتغير الحالة لـ connected، حمّل الرسائل
   useEffect(() => {
-    if (status.state === 'connected') loadMessages();
-  }, [status.state, loadMessages]);
+    if (status.state === 'connected') {
+      loadMessages();
+      loadAllowedGroups();
+    }
+  }, [status.state, loadMessages, loadAllowedGroups]);
 
   const handleStart = async () => {
     setStarting(true);
@@ -163,6 +218,97 @@ export default function WhatsApp() {
           )}
         </div>
       </div>
+
+      {/* ─── المجموعات المسموح بها (فلتر الرسائل) ─── */}
+      {status.state === 'connected' && (
+        <div className="bg-white rounded-2xl shadow border border-gray-100 p-5 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-gray-700 flex items-center gap-2">
+              <Users size={18} className="text-green-600" />
+              المجموعات المسموح بها
+            </h2>
+            <button
+              onClick={loadWaGroups}
+              disabled={loadingGroups}
+              className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg disabled:opacity-50"
+            >
+              {loadingGroups ? 'جارٍ الجلب...' : 'جلب مجموعاتي من واتساب'}
+            </button>
+          </div>
+
+          <p className="text-xs text-gray-500 mb-3">
+            سيتم استقبال الرسائل من هذه المجموعات فقط (مطابقة الاسم بدقّة، غير حسّاس لحالة الأحرف).
+          </p>
+
+          {/* القائمة المعتمدة */}
+          {allowedGroups.length === 0 ? (
+            <p className="text-sm text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+              ⚠️ لم تُضِف أي مجموعة بعد — جميع الرسائل ستُتجاهَل.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {allowedGroups.map(name => (
+                <div key={name} className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-800 rounded-lg px-3 py-1.5 text-sm">
+                  <Check size={14} />
+                  <span>{name}</span>
+                  <button
+                    onClick={() => removeGroup(name)}
+                    disabled={savingGroups}
+                    className="text-green-600 hover:text-red-600 disabled:opacity-50"
+                    title="حذف"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* إضافة يدوية */}
+          <div className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={e => setNewGroupName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addGroup(newGroupName)}
+              placeholder="اكتب اسم المجموعة كما يظهر في واتساب..."
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-green-400"
+              dir="auto"
+            />
+            <button
+              onClick={() => addGroup(newGroupName)}
+              disabled={savingGroups || !newGroupName.trim()}
+              className="flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50"
+            >
+              <Plus size={16} />
+              إضافة
+            </button>
+          </div>
+
+          {/* اقتراحات من مجموعات الحساب */}
+          {waGroups.length > 0 && (
+            <div className="border-t border-gray-100 pt-3">
+              <p className="text-xs text-gray-500 mb-2">مجموعاتك على واتساب — اضغط للإضافة:</p>
+              <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto">
+                {waGroups
+                  .filter(g => !allowedGroups.some(a => a.toLowerCase() === (g.subject || '').toLowerCase()))
+                  .map(g => (
+                    <button
+                      key={g.id}
+                      onClick={() => addGroup(g.subject)}
+                      disabled={savingGroups}
+                      className="flex items-center gap-1 bg-gray-50 hover:bg-green-50 hover:border-green-300 border border-gray-200 text-gray-700 rounded-lg px-3 py-1.5 text-xs transition-colors disabled:opacity-50"
+                    >
+                      <Plus size={12} />
+                      <span dir="auto">{g.subject}</span>
+                      <span className="text-gray-400">({g.size})</span>
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─── آخر الرسائل ─── */}
       {messages.length > 0 && (

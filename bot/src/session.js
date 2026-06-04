@@ -151,6 +151,21 @@ export class Session {
     this.phoneNumber = null;
   }
 
+  async listGroups() {
+    if (!this.sock || this.state !== 'connected') return [];
+    try {
+      const groups = await this.sock.groupFetchAllParticipating();
+      return Object.values(groups).map(g => ({
+        id: g.id,
+        subject: g.subject,
+        size: g.participants?.length || 0,
+      }));
+    } catch (err) {
+      logger.error({ tenant: this.tenantId, err }, 'listGroups failed');
+      return [];
+    }
+  }
+
   status() {
     return {
       tenantId: this.tenantId,
