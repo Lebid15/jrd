@@ -43,8 +43,29 @@ router.post('/ingest', internalAuth, (req, res) => {
 });
 
 /**
+ * GET /api/internal/whatsapp/health
+ * فحص قابلية الوصول للبوت (مستقل عن وجود جلسة)
+ *  - reachable=true → البوت يعمل
+ *  - reachable=false → البوت متوقف أو BOT_URL خاطئ
+ */
+router.get('/whatsapp/health', async (req, res) => {
+  const botUrl = process.env.BOT_URL || 'http://localhost:3100';
+  try {
+    const r = await fetch(`${botUrl}/healthz`);
+    if (!r.ok) return res.json({ reachable: false, error: `bot_status_${r.status}` });
+    const data = await r.json();
+    res.json({ reachable: true, ...data });
+  } catch (e) {
+    res.json({ reachable: false, error: e.code || 'bot_unreachable' });
+  }
+});
+
+/**
  * GET /api/internal/whatsapp/status
  * الواجهة تستعلم عن حالة جلسة الواتساب من البوت
+ *  - 404 من البوت = البوت يعمل لكن لا توجد جلسة بعد ("idle")
+ *  - فشل الاتصال أو 5xx = البوت غير متاح ("offline")
+ *  - 401 = مشكلة في INTERNAL_API_KEY
  */
 router.get('/whatsapp/status', async (req, res) => {
   const botUrl = process.env.BOT_URL || 'http://localhost:3100';
@@ -53,11 +74,13 @@ router.get('/whatsapp/status', async (req, res) => {
     const r = await fetch(`${botUrl}/sessions/1`, {
       headers: { 'X-Internal-Api-Key': key },
     });
-    if (!r.ok) return res.json({ state: 'offline' });
+    if (r.status === 404) return res.json({ state: 'idle' });
+    if (r.status === 401) return res.json({ state: 'offline', error: 'auth_mismatch' });
+    if (!r.ok) return res.json({ state: 'offline', error: `bot_status_${r.status}` });
     const data = await r.json();
     res.json(data);
-  } catch {
-    res.json({ state: 'offline' });
+  } catch (e) {
+    res.json({ state: 'offline', error: e.code || 'bot_unreachable' });
   }
 });
 

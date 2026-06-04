@@ -169,11 +169,20 @@ export default function WhatsApp() {
       {status.state === 'offline' && (
         <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-xl text-sm text-yellow-800">
           <p className="font-bold mb-1">⚠️ البوت غير متاح</p>
-          <p>تأكد من إضافة متغيّرات البيئة في Railway:</p>
-          <code className="block mt-1 text-xs bg-yellow-100 p-2 rounded">
-            BOT_URL=http://bot:3100<br/>
-            INTERNAL_API_KEY=...
-          </code>
+          {status.error === 'auth_mismatch' ? (
+            <p>قيمة <code className="bg-yellow-100 px-1 rounded">INTERNAL_API_KEY</code> في backend لا تطابق قيمة البوت. تأكّد من تطابقهما في Railway.</p>
+          ) : (
+            <>
+              <p>تأكد من تشغيل خدمة البوت وأن متغيّرات البيئة موجودة في Railway:</p>
+              <code className="block mt-1 text-xs bg-yellow-100 p-2 rounded">
+                BOT_URL=http://localhost:3100<br/>
+                INTERNAL_API_KEY=...
+              </code>
+              {status.error && (
+                <p className="text-xs mt-2 text-yellow-700">سبب الفشل: <code>{status.error}</code></p>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

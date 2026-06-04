@@ -77,13 +77,17 @@
 - متغيّرات Railway: `BOT_URL=http://localhost:3100` + `INTERNAL_API_KEY=Asdf1212asdf!!` + `AUTH_DIR=/data/auth_sessions`.
 
 ### المشكلة الحالية 🛑
-- صفحة الواتساب تُرجع **Unauthorized** من الواجهة.
-- السبب: auth middleware كان يطبَّق على كل المسارات بما فيها مسارات الواجهة.
-- **الإصلاح جاهز**: auth محدودة على `/ingest` فقط — باقي المسارات بدون auth.
+- صفحة الواتساب كانت تعرض **"البوت غير متاح"** حتى عندما يكون البوت يعمل.
+- **السبب الجذري**: عند أول إقلاع لا توجد جلسة لـ `tenant_id=1`، فالبوت يردّ بـ 404 على `GET /sessions/1`، و backend كان يفسّر أيّ ردّ ≠ 2xx على أنه `offline`.
+- **الإصلاحات المطبّقة** (5 يونيو 2026):
+  1. backend `GET /api/internal/whatsapp/status`: يفرّق بين 404 (= `idle`) و 401 (= `auth_mismatch`) و 5xx/شبكة (= `offline`).
+  2. backend: endpoint تشخيصي جديد `GET /api/internal/whatsapp/health` يفحص قابلية الوصول للبوت بدون مفتاح.
+  3. bot `server.js`: نقل `/healthz` إلى ما قبل `authMiddleware` ليعمل بدون مفتاح (للـ Railway healthcheck).
+  4. الواجهة: رسالة دقيقة حسب نوع الخطأ + إخفاء التحذير عند `idle`.
 - **يحتاج**: push → Railway deploy → اختبار QR.
 
 ### الخطوة التالية
-- بعد إصلاح الـ Unauthorized: ربط رقم الهاتف عبر QR.
+- بعد deploy: ضغط زرّ "ربط رقم جديد" → يجب أن يظهر QR.
 - تحديد المجموعات المراد مراقبتها (البند 5 و6).
 
 ---

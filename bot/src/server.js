@@ -5,6 +5,11 @@ import { startSession, logoutSession, getSession, listSessions } from './session
 
 const router = express.Router();
 
+// ─── Public: healthz (بدون auth) — للـ Railway healthcheck وللتشخيص ─────────
+router.get('/healthz', (req, res) => {
+  res.json({ ok: true, sessions: listSessions().length });
+});
+
 // ─── Auth middleware ─────────────────────────────────────────────────────────
 function authMiddleware(req, res, next) {
   const provided = req.headers['x-internal-api-key'] || '';
@@ -23,11 +28,7 @@ function authMiddleware(req, res, next) {
 
 router.use(authMiddleware);
 
-// ─── Routes ──────────────────────────────────────────────────────────────────
-
-router.get('/healthz', (req, res) => {
-  res.json({ ok: true, sessions: listSessions().length });
-});
+// ─── Protected routes ────────────────────────────────────────────────────────
 
 router.get('/sessions', (req, res) => {
   res.json(listSessions());
