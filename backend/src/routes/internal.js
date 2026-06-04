@@ -4,10 +4,10 @@ import db from '../database.js';
 
 const router = Router();
 
-// ─── Auth middleware (X-Internal-Api-Key) ────────────────────────────────────
+// ─── Auth middleware (X-Internal-Api-Key) — للبوت فقط ───────────────────────
 function internalAuth(req, res, next) {
   const key = process.env.INTERNAL_API_KEY || '';
-  if (!key) return next(); // لو لم يُضبط نسمح بالمرور (dev)
+  if (!key) return next();
   const provided = req.headers['x-internal-api-key'] || '';
   try {
     const a = Buffer.from(provided.padEnd(64));
@@ -19,13 +19,8 @@ function internalAuth(req, res, next) {
   next();
 }
 
-router.use(internalAuth);
-
-/**
- * POST /api/internal/ingest
- * البوت يرسل رسالة واردة من واتساب للحفظ
- */
-router.post('/ingest', (req, res) => {
+// ingest فقط يحتاج auth (يُستدعى من البوت)
+router.post('/ingest', internalAuth, (req, res) => {
   const { tenant_id, group_id, group_name, sender, sender_name, message_id, text, is_group } = req.body;
   if (!text || !group_id) return res.status(400).json({ error: 'text and group_id required' });
 

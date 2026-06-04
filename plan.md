@@ -1,4 +1,4 @@
-# خطة تطوير مشروع JRD — التحوّل إلى نظام جرد آلي شامل
+﻿# خطة تطوير مشروع JRD — التحوّل إلى نظام جرد آلي شامل
 
 > الهدف: تحويل نظام الجرد اليومي الحالي من إدخال يدوي إلى نظام **آلي بالكامل** عبر مزيج من: روبوتات تصفّح (Web Scraping/Automation)، تكاملات API، وبوت واتساب (Baileys). ثم إضافة طبقة **جرد شهري** فوق الجرد اليومي.
 
@@ -8,14 +8,14 @@
 
 ---
 
-## 📊 حالة المشروع — آخر تحديث: 4 يونيو 2026
+## 📊 حالة المشروع — آخر تحديث: 5 يونيو 2026
 
 | البند | الوصف | الحالة |
 |-------|-------|--------|
 | 1 | روبوت موقع شحن الألعاب (bayi.alayatl.com) | ✅ **منجز ومنشور** |
-| 2 | روبوت موقع SMM (followers-store.com) | 🟡 **متوقف — مشكلة حجب Cloudflare** |
-| 3 | روبوت البنوك | ⏳ لم يبدأ |
-| 4 | بوت واتساب — البنية الأساسية | ⏳ لم يبدأ |
+| 2 | روبوت موقع SMM (followers-store.com) | ✅ **يعمل بنجاح** |
+| 3 | البنك (كويت ترك) — SMS تلقائي | ✅ **منجز ومنشور** |
+| 4 | بوت واتساب — البنية الأساسية | 🟡 **جاري — مشكلة auth في الواجهة** |
 | 5 | مطابقة الصرافين | ⏳ لم يبدأ |
 | 6 | مجموعة غلة + العامل الميداني | ⏳ لم يبدأ |
 | 7 | نوعا الحوالات من المحلات | ⏳ لم يبدأ |
@@ -41,55 +41,53 @@
 
 ---
 
-## � البند 2 — موقع SMM (followers-store.com) — متوقف مؤقتاً
+## ✅ البند 2 — موقع SMM (followers-store.com) — يعمل
 
-### ما أُنجز ✅
-- إضافة نوع provider جديد `smm_panel` في `backend/src/providers.js` (دالة `fetchSmmPanelBalance`).
-- يستخدم API الرسمي للموقع (endpoint `/api/v2`, action `balance`، يرجّع JSON بالرصيد بالـ USD).
-- تطبيع `base_url` (يقبل الجذر أو مع `/api/v2`).
-- إضافة الحقول في الواجهة (`ApiSettings.jsx`): base_url + api_token.
-- يحفظ الرصيد في `usd_amount` (لأنه USD).
-- محاولة 1: إرسال User-Agent متصفّح → لم يكفِ.
-- محاولة 2: إضافة رؤوس متصفّح كاملة (sec-ch-ua, Origin, Referer) → لم يكفِ.
-- محاولة 3: نشر **Cloudflare Worker** كوسيط (`cloudflare-worker/worker.js` + README) → فشل.
-
-### المشكلة الحقيقية 🛑
-- `followers-store.com` محمي بـ Cloudflare ويحجب IP خوادم Railway مباشرة (HTTP 403 + HTML).
-- جرّبنا Cloudflare Worker وسيطاً، لكن Cloudflare **يمنع طلبات Worker → موقع آخر محمي بـ Cloudflare** (سياسة منع الحلقات) → الـ Worker يردّ 504 Gateway Timeout بعد 30 ثانية.
-- اختبار يدوي من PowerShell: `curl` على رابط الـ Worker يفشل بـ schannel timeout بعد 30s — تأكيد قاطع أن المشكلة في الـ Worker وليس الكود.
-
-### حالة المتغيرات الحالية على Railway
-- `SMM_PROXY_URL = https://aged-moon-5d78smm-proxy.alayatl-tr.workers.dev` (الـ Worker موجود لكن غير مجدٍ).
-- `SMM_PROXY_SECRET = jrd-2026-x9k2m7n4p8q1` (نفس القيمة موجودة في Cloudflare كـ `PROXY_SECRET`).
-- يمكن إبقاؤها أو حذفها — سواء.
-
-### الخيارات المقترحة للحل (نناقشها في المحادثة القادمة)
-
-| # | الخيار | التكلفة | التعقيد | الموثوقية |
-|---|--------|---------|---------|-----------|
-| A | **Vercel Serverless Function** كوسيط (نفس فكرة الـ Worker، لكن Vercel على AWS وليس CF) | مجاني | منخفض (5 دقائق) | عالية |
-| B | **Render Free Web Service** كوسيط | مجاني (cold start بطيء) | منخفض | متوسطة |
-| C | **Playwright على Railway** — تسجيل دخول للوحة followers-store.com وقراءة الرصيد من الواجهة (مثل bayi_alayatl تماماً) | صفر إضافي | متوسط | عالية (بطيء 10–15s) |
-| D | **بروكسي HTTP مدفوع** (Webshare/IPRoyal $1–5/شهر) | مدفوع | منخفض جداً | عالية جداً |
-| E | **استضافة بديلة لـ backend** (مثل Hetzner/Contabo بـIP غير محجوب) | مدفوع | عالٍ (نقل المشروع) | عالية |
-
-### القرار المبدئي
-- المستخدم رفض الخيار المدفوع الشهري.
-- **مرشّحان قويان**: A (Vercel) أو C (Playwright على نفس Railway).
-- Vercel أسرع وأنظف، Playwright يحتاج بيانات دخول الموقع (Email + Password) لكن لا يحتاج خدمة خارجية.
-
-### ملفات لها علاقة
-- `backend/src/providers.js` — دالة `fetchSmmPanelBalance` (مع logs تشخيصية حالياً).
-- `frontend/src/pages/ApiSettings.jsx` — حقول base_url + api_token.
-- `cloudflare-worker/worker.js` + `cloudflare-worker/README.md` — الـ Worker (يمكن إعادة استخدام بنيته في Vercel).
-- `info.md` — طريقة النشر (git push → Railway auto-deploy).
-
-### الخطوة التالية في المحادثة القادمة
-1. اختيار الحل (A / B / C / D).
-2. لو A أو B: إعداد الحساب + نشر الوسيط + ربط المتغيرات.
-3. لو C: تسليم بيانات دخول `followers-store.com` للعمل على scraper جديد.
+- يستخدم API الرسمي للموقع (endpoint `/api/v2`, action `balance`).
+- الرصيد يُحفظ في `usd_amount`.
+- **الحالة**: يعمل بنجاح في الإنتاج.
 
 ---
+
+## ✅ البند 3 — البنك (كويت ترك) — منجز ومنشور
+
+- جدول `bank_transactions` في قاعدة البيانات.
+- `POST /api/bank/sms-webhook` — يستقبل SMS من تطبيق SMS Forwarder.
+- Parser يحلّل رسائل كويت ترك: وارد (`para geldi`) وصادر (`para gönderildi`).
+- يحدّث رصيد بند نوع `bank` تلقائياً + يحفظ كل معاملة في السجل.
+- صفحة **البنك** في الواجهة: بطاقة الرصيد + تعديل يدوي + سجل المعاملات.
+- متغيّرات Railway: `SMS_WEBHOOK_SECRET=jrd-bank-2026`.
+- تطبيق SMS Forwarder مضبوط على فلتر `Kuveyt` + URL الـ webhook.
+
+---
+
+## 🟡 البند 4 — بوت واتساب (Baileys) — جارٍ
+
+### ما أُنجز ✅
+- مجلد `bot/` كامل (Node + Baileys + Express على port 3100).
+- `session.js` — كلاس يدير اتصال واتساب (QR → connected → reconnect تلقائي).
+- `sessionManager.js` — يستأنف الجلسات تلقائياً عند إعادة التشغيل.
+- `encryptedAuthStore.js` — تشفير AES-256-GCM لملفات جلسة Baileys.
+- `server.js` — HTTP داخلي: start / logout / status / sessions.
+- `backendClient.js` — يرسل الرسائل الواردة إلى `/api/internal/ingest`.
+- `backend/src/routes/internal.js` — routes داخلية للواجهة والبوت.
+- جدول `whatsapp_messages` في DB.
+- صفحة **واتساب** في الواجهة: حالة + QR + آخر الرسائل.
+- `start.sh` يشغّل backend والبوت معاً — مؤكّد يعمل (`Bot server started port: 3100`).
+- متغيّرات Railway: `BOT_URL=http://localhost:3100` + `INTERNAL_API_KEY=Asdf1212asdf!!` + `AUTH_DIR=/data/auth_sessions`.
+
+### المشكلة الحالية 🛑
+- صفحة الواتساب تُرجع **Unauthorized** من الواجهة.
+- السبب: auth middleware كان يطبَّق على كل المسارات بما فيها مسارات الواجهة.
+- **الإصلاح جاهز**: auth محدودة على `/ingest` فقط — باقي المسارات بدون auth.
+- **يحتاج**: push → Railway deploy → اختبار QR.
+
+### الخطوة التالية
+- بعد إصلاح الـ Unauthorized: ربط رقم الهاتف عبر QR.
+- تحديد المجموعات المراد مراقبتها (البند 5 و6).
+
+---
+
 
 
 ## الوضع الحالي (Baseline)
