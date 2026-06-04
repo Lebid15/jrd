@@ -1,6 +1,7 @@
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
+  Browsers,
 } from '@whiskeysockets/baileys';
 import { useEncryptedAuthState } from './encryptedAuthStore.js';
 import { ingestMessage } from './backendClient.js';
@@ -40,6 +41,9 @@ export class Session {
       version,
       auth: state,
       printQRInTerminal: false,
+      browser: Browsers.macOS('Desktop'),
+      syncFullHistory: false,
+      markOnlineOnConnect: false,
       logger: logger.child({ tenant: this.tenantId }),
     });
 
@@ -64,11 +68,23 @@ export class Session {
       if (connection === 'close') {
         const code = lastDisconnect?.error?.output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
-        logger.warn({ tenant: this.tenantId, code, loggedOut }, 'Connection closed');
-        this.state = loggedOut ? 'closed' : 'connecting';
-        if (!loggedOut) {
-          setTimeout(() => this.start(), 5000);
+        const restartRequired = code === DisconnectReason.restartRequired; // 515 — يحدث بعد مسح QR
+        logger.warn({ tenant: this.tenantId, code, loggedOut, restartRequired }, 'Connection closed');
+
+        if (loggedOut) {
+          this.state = 'closed';
+          return;
         }
+
+        // restartRequired = اقتران ناجح، نحتاج إعادة فتح socket فوراً بنفس creds
+        // باقي الأخطاء = انقطاع شبكي → إعادة محاولة بعد تأخير
+        const delay = restartRequired ? 0 : 5000;
+        this.state = 'connecting';
+        setTimeout(() => {
+          this.start({ force: true }).catch(err =>
+            logger.error({ tenant: this.tenantId, err }, 'Reconnect failed')
+          );
+        }, delay);
       }
     });
 
