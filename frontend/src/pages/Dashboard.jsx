@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Save, Trash2, GripVertical, Wifi, Bot } from 'lucide-react';
+import { Plus, RefreshCw, Save, Trash2, GripVertical, Wifi, Bot, Landmark } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -131,8 +131,8 @@ export default function Dashboard() {
     );
   }
 
-  const providerItems = items.filter(i => i.type === 'provider');
-  const manualItems = items.filter(i => i.type !== 'provider');
+  const providerItems = items.filter(i => i.type === 'provider' || i.type === 'bank');
+  const manualItems = items.filter(i => i.type !== 'provider' && i.type !== 'bank');
 
   return (
     <div className="animate-fade-in max-w-5xl mx-auto">
@@ -191,9 +191,11 @@ export default function Dashboard() {
                   <td className="py-2 px-2 md:px-4 text-gray-400 text-xs md:text-sm">{index + 1}</td>
                   <td className="py-2 px-2 md:px-4 font-medium text-sm md:text-base">
                     <div className="flex items-center gap-1 md:gap-2">
-                      {isScraper(item.api_provider_type || item.provider_type)
-                        ? <Bot size={14} className="text-blue-600 shrink-0" />
-                        : <Wifi size={14} className="text-emerald-600 shrink-0" />
+                      {item.type === 'bank'
+                        ? <Landmark size={14} className="text-blue-600 shrink-0" />
+                        : isScraper(item.api_provider_type || item.provider_type)
+                          ? <Bot size={14} className="text-blue-600 shrink-0" />
+                          : <Wifi size={14} className="text-emerald-600 shrink-0" />
                       }
                       <span className="truncate max-w-[80px] md:max-w-none">{item.name}</span>
                     </div>
