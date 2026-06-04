@@ -63,6 +63,20 @@ export class Session {
         this.qrDataUrl = null;
         this.phoneNumber = this.sock.user?.id?.split(':')[0] || null;
         logger.info({ tenant: this.tenantId, phone: this.phoneNumber }, 'Connected');
+
+        // عبّئ كاش أسماء المجموعات مسبقاً (يتفادى timeouts عند ورود الرسائل)
+        setTimeout(async () => {
+          try {
+            const groups = await this.sock.groupFetchAllParticipating();
+            if (!this._groupCache) this._groupCache = new Map();
+            for (const g of Object.values(groups)) {
+              this._groupCache.set(g.id, g.subject);
+            }
+            logger.info({ tenant: this.tenantId, count: this._groupCache.size }, 'group cache primed');
+          } catch (e) {
+            logger.warn({ tenant: this.tenantId, err: e.message }, 'group cache prime failed');
+          }
+        }, 3000);
       }
 
       if (connection === 'close') {
@@ -88,40 +102,80 @@ export class Session {
       }
     });
 
-    this.sock.ev.on('messages.upsert', async ({ messages }) => {
+    this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
       for (const msg of messages) {
-        if (!msg.message) continue;
-        if (msg.key.fromMe) continue;
-        const jid = msg.key.remoteJid || '';
-        const isGroup = jid.endsWith('@g.us');
+        try {
+          if (!msg.message) continue;
+          if (msg.key.fromMe) continue;
+          const jid = msg.key.remoteJid || '';
+          const isGroup = jid.endsWith('@g.us');
 
-        const text =
-          msg.message.conversation ||
-          msg.message.extendedTextMessage?.text ||
-          msg.message.imageMessage?.caption ||
-          msg.message.videoMessage?.caption ||
-          '';
+          // دعم ephemeral / viewOnce / reactions الخ
+          const inner =
+            msg.message.ephemeralMessage?.message ||
+            msg.message.viewOnceMessage?.message ||
+            msg.message.viewOnceMessageV2?.message ||
+            msg.message;
 
-        if (!text.trim()) continue;
+          const text =
+            inner.conversation ||
+            inner.extendedTextMessage?.text ||
+            inner.imageMessage?.caption ||
+            inner.videoMessage?.caption ||
+            inner.documentMessage?.caption ||
+            inner.documentWithCaptionMessage?.message?.documentMessage?.caption ||
+            '';
 
-        let groupName = null;
-        if (isGroup) {
-          try {
-            const meta = await this.sock.groupMetadata(jid);
-            groupName = meta.subject;
-          } catch {}
+          if (!text.trim()) continue;
+
+          let groupName = null;
+          if (isGroup) {
+            // 1) جرّب من الكاش (سريع، لا timeout)
+            try {
+              const cached = this._groupCache?.get(jid);
+              if (cached) groupName = cached;
+            } catch {}
+            // 2) لو لا يوجد كاش، اطلب metadata مع timeout قصير
+            if (!groupName) {
+              try {
+                const meta = await Promise.race([
+                  this.sock.groupMetadata(jid),
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('meta_timeout')), 5000)),
+                ]);
+                groupName = meta?.subject || null;
+                if (groupName) {
+                  if (!this._groupCache) this._groupCache = new Map();
+                  this._groupCache.set(jid, groupName);
+                }
+              } catch (e) {
+                logger.warn({ tenant: this.tenantId, jid, err: e.message }, 'groupMetadata failed');
+              }
+            }
+          }
+
+          logger.info({
+            tenant: this.tenantId,
+            jid,
+            isGroup,
+            groupName,
+            sender: msg.pushName,
+            text: text.slice(0, 60),
+            type,
+          }, '[wa→ingest]');
+
+          await ingestMessage({
+            tenant_id: this.tenantId,
+            group_id: jid,
+            group_name: groupName,
+            sender: msg.key.participant || msg.key.remoteJid,
+            sender_name: msg.pushName || null,
+            message_id: msg.key.id,
+            text,
+            is_group: isGroup,
+          });
+        } catch (err) {
+          logger.error({ tenant: this.tenantId, err: err.message }, 'message handler failed');
         }
-
-        await ingestMessage({
-          tenant_id: this.tenantId,
-          group_id: jid,
-          group_name: groupName,
-          sender: msg.key.participant || msg.key.remoteJid,
-          sender_name: msg.pushName || null,
-          message_id: msg.key.id,
-          text,
-          is_group: isGroup,
-        });
       }
     });
   }
