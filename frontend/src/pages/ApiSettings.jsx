@@ -9,6 +9,7 @@ const PROVIDER_TYPES = [
   { value: 'murat_temiz', label: 'Murat Temiz', fields: ['base_url', 'kod', 'sifre'] },
   { value: 'smm_panel', label: 'SMM Panel (متابعين/مشاهدات)', fields: ['base_url', 'api_token'] },
   { value: 'bayi_alayatl', label: 'روبوت موقع Bayi Alayatl', fields: ['base_url', 'kod', 'sifre'] },
+  { value: 'kuveyt_turk', label: '🏦 كويت ترك (بنك — SMS تلقائي)', fields: [] },
 ];
 
 const SCRAPER_PROVIDERS = new Set(['bayi_alayatl']);
@@ -63,8 +64,15 @@ export default function ApiSettings() {
   const saveConfig = async () => {
     if (!selectedItem) return;
     try {
-      await api.put(`/configs/${selectedItem.id}`, config);
-      toast.success('تم حفظ الإعدادات');
+      if (config.provider_type === 'kuveyt_turk') {
+        // البنك لا يحتاج api_configs — فقط نضبط نوع البند
+        await api.put(`/items/${selectedItem.id}`, { type: 'bank' });
+        toast.success('تم ضبط البند كحساب بنكي ✅');
+      } else {
+        await api.put(`/items/${selectedItem.id}`, { type: 'provider' });
+        await api.put(`/configs/${selectedItem.id}`, config);
+        toast.success('تم حفظ الإعدادات');
+      }
       load();
     } catch {
       toast.error('خطأ في الحفظ');
@@ -161,7 +169,25 @@ export default function ApiSettings() {
                 </select>
               </div>
 
-              {/* Base URL */}
+              {/* بطاقة كويت ترك — بدل حقول الإدخال */}
+              {config.provider_type === 'kuveyt_turk' && (
+                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800" dir="rtl">
+                  <p className="font-bold text-base mb-2">🏦 إعداد حساب كويت ترك</p>
+                  <p className="mb-3">هذا البند لا يحتاج بيانات دخول — الرصيد يُحدَّث تلقائياً عند استقبال SMS من البنك.</p>
+                  <p className="font-semibold mb-1">بعد الحفظ:</p>
+                  <ol className="list-decimal list-inside space-y-1 text-blue-700">
+                    <li>اطلب من المطوّر إضافة متغيّر <code className="bg-blue-100 px-1 rounded">SMS_WEBHOOK_SECRET</code> في Railway</li>
+                    <li>حمّل تطبيق <b>SMS Forwarder</b> على هاتف Android</li>
+                    <li>اضبطه ليرسل رسائل <b>Kuveyt Turk</b> إلى:<br/>
+                      <code className="bg-blue-100 px-1 rounded text-xs break-all">https://ahlacard.net/api/bank/sms-webhook?secret=...</code>
+                    </li>
+                  </ol>
+                  <p className="mt-3 text-green-700 font-semibold">اضغط "حفظ الإعدادات" لضبط هذا البند كحساب بنكي.</p>
+                </div>
+              )}
+
+              {/* Base URL — مخفي لكويت ترك */}
+              {config.provider_type !== 'kuveyt_turk' && (
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">رابط الموقع (Base URL)</label>
                 <input
@@ -173,9 +199,10 @@ export default function ApiSettings() {
                   dir="ltr"
                 />
               </div>
+              )}
 
               {/* Znet / Murat Temiz / Bayi Alayatl fields */}
-              {(config.provider_type === 'znet' || config.provider_type === 'murat_temiz' || config.provider_type === 'bayi_alayatl') && (
+              {config.provider_type !== 'kuveyt_turk' && (config.provider_type === 'znet' || config.provider_type === 'murat_temiz' || config.provider_type === 'bayi_alayatl') && (
                 <>
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 mb-1">

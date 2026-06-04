@@ -38,12 +38,13 @@ router.post('/', (req, res) => {
 
 // Update item
 router.put('/:id', (req, res) => {
-  const { name, sort_order } = req.body;
+  const { name, sort_order, type } = req.body;
   const updates = [];
   const params = [];
 
   if (name !== undefined) { updates.push('name = ?'); params.push(name); }
   if (sort_order !== undefined) { updates.push('sort_order = ?'); params.push(sort_order); }
+  if (type !== undefined) { updates.push('type = ?'); params.push(type); }
 
   if (updates.length === 0) return res.status(400).json({ error: 'Nothing to update' });
 
