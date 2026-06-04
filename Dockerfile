@@ -50,7 +50,10 @@ RUN cd scraper && npx playwright install chromium
 COPY backend/ ./backend/
 COPY scraper/ ./scraper/
 COPY bot/ ./bot/
+COPY start.sh ./start.sh
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+
+RUN chmod +x /app/start.sh
 
 # Persistent data dir (mounted as a Volume in Railway)
 RUN mkdir -p /data/uploads /data/browser-data /data/auth_sessions
@@ -62,5 +65,4 @@ RUN mkdir -p /data/uploads /data/browser-data /data/auth_sessions
 EXPOSE 3001
 EXPOSE 3100
 
-# نشغّل backend والبوت معاً
-CMD node backend/src/index.js & node bot/src/index.js & wait
+CMD ["/bin/sh", "/app/start.sh"]
