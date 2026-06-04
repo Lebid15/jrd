@@ -55,25 +55,35 @@ export async function fetchSmmPanelBalance(config) {
   // or the full API URL (https://followers-store.com/api/v2) — both work.
   let cleanUrl = (config.base_url || '').trim().replace(/\/+$/, '');
   cleanUrl = cleanUrl.replace(/\/api(\/v2)?$/i, '');
-  const url = `${cleanUrl}/api/v2`;
+  const targetUrl = `${cleanUrl}/api/v2`;
+
+  // If SMM_PROXY_URL is set, route through Cloudflare Worker to bypass IP-based blocking
+  const proxyBase = (process.env.SMM_PROXY_URL || '').trim().replace(/\/+$/, '');
+  const url = proxyBase
+    ? `${proxyBase}/?target=${encodeURIComponent(targetUrl)}`
+    : targetUrl;
+
   const body = new URLSearchParams({ key: config.api_token || '', action: 'balance' });
+  const headers = {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
+    'Origin': cleanUrl,
+    'Referer': `${cleanUrl}/`,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'sec-ch-ua': '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'Sec-Fetch-Dest': 'empty',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-origin',
+  };
+  if (process.env.SMM_PROXY_SECRET) {
+    headers['x-proxy-secret'] = process.env.SMM_PROXY_SECRET;
+  }
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Accept': 'application/json, text/plain, */*',
-      'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Origin': cleanUrl,
-      'Referer': `${cleanUrl}/`,
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-      'sec-ch-ua': '"Chromium";v="125", "Not.A/Brand";v="24", "Google Chrome";v="125"',
-      'sec-ch-ua-mobile': '?0',
-      'sec-ch-ua-platform': '"Windows"',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-origin',
-    },
+    headers,
     body: body.toString(),
     timeout: 15000,
   });
