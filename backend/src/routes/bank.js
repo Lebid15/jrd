@@ -77,18 +77,14 @@ router.post('/sms-webhook', (req, res) => {
     return res.status(400).json({ error: 'body is required' });
   }
 
-  // نتحقق أن الرسالة من كويت ترك (اختياري لو أرسل المرسِل)
-  const senderLower = sender.toLowerCase();
-  if (senderLower && !senderLower.includes('kuveyt') && !senderLower.includes('ktbank')) {
-    // نسمح بالمرور إذا لم يُرسَل sender (بعض التطبيقات لا ترسله)
-    if (senderLower.length > 0) {
-      return res.status(400).json({ error: 'Unknown sender' });
-    }
-  }
+  // نستخرج نص الرسالة الفعلي — بعض التطبيقات ترسل "From : X\nنص الرسالة"
+  const bodyClean = smsBody.includes('\n')
+    ? smsBody.split('\n').slice(smsBody.startsWith('From') ? 1 : 0).join('\n').trim()
+    : smsBody.trim();
 
-  const parsed = parseSms(smsBody);
+  const parsed = parseSms(bodyClean);
   if (!parsed) {
-    return res.status(422).json({ error: 'Could not parse SMS', raw: smsBody });
+    return res.status(422).json({ error: 'Could not parse SMS', raw: bodyClean });
   }
 
   // إيجاد البند البنكي — إما بـ item_id أو أول بند من نوع 'bank'
@@ -123,7 +119,7 @@ router.post('/sms-webhook', (req, res) => {
       parsed.senderReceiver,
       parsed.description,
       parsed.transactionTime,
-      smsBody,
+      bodyClean,
       newBalance
     );
     return result.lastInsertRowid;
