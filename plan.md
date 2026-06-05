@@ -19,7 +19,7 @@
 | 5 | مطابقة الصرافين | ⏳ لم يبدأ |
 | 6 | مجموعة غلة + العامل الميداني | ⏳ لم يبدأ |
 | 7 | نوعا الحوالات من المحلات | ⏳ لم يبدأ |
-| 8 | الجرد الشهري | ⏳ لم يبدأ |
+| 8 | الجرد الشهري | ✅ **منجز** |
 | 9 | إعادة هيكلة قاعدة البيانات | ⏳ لم يبدأ |
 | 10 | الأمان والمراقبة + المصادقة | ⏳ مؤجل لآخر |
 
@@ -82,6 +82,38 @@
 - إضافة checkbox لكل صفّ + حذف جماعي.
 - ترقيم الصفحات (20/30 صفّ).
 - شريط بحث/فلترة.
+
+---
+
+## ✅ البند 8 — الجرد الشهري — منجز
+
+### الفكرة
+- زرّ جديد في **الجرد اليومي** بجوار "حفظ الجرد" اسمه **"جرد شهري"** (لون بنفسجي).
+- قسم جديد في السايدبار **"الجرد الشهري"** (`/monthly`).
+
+### الآلية
+- **أوّل مرّة**: snapshot لرأس المال الحالي فقط، `period_profit = 0`.
+- **المرّات التالية**: snapshot جديد + جمع `profit` لكل جرد يومي تمّ بعد `created_at` لآخر جرد شهري وحتّى الآن.
+- يحفظ snapshot كامل للبنود (مثل الجرد اليومي) → قابل للعرض/التصدير لاحقاً.
+
+### Schema الجديد
+- جدول `monthly_inventories`:
+  `id, date, exchange_rate, total_try, total_usd, total_converted_usd,
+   previous_monthly_id, previous_total_usd, period_from, period_to,
+   period_profit, daily_count, notes, created_at`
+- جدول `monthly_inventory_items`: نفس بنية `inventory_items`.
+
+### API
+- `GET /api/monthly` — قائمة + total
+- `GET /api/monthly/:id` — تفاصيل + بنود
+- `GET /api/monthly/last/one` — الأخير
+- `GET /api/monthly/preview/next` — معاينة قبل الحفظ (is_first, period_profit, daily_count, ...)
+- `POST /api/monthly` — حفظ جرد شهري جديد
+- `DELETE /api/monthly/:id`
+
+### الواجهة
+- صفحة `MonthlyArchive.jsx`: بطاقة معاينة + قائمة جرود قابلة للطيّ (تفاصيل + جدول البنود) + تصدير PDF + حذف.
+- زرّ في `Dashboard.jsx` يعرض تأكيداً واضحاً قبل الحفظ.
 
 ---
 

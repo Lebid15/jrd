@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Save, Trash2, GripVertical, Wifi, Bot, Landmark } from 'lucide-react';
+import { Plus, RefreshCw, Save, Trash2, GripVertical, Wifi, Bot, Landmark, CalendarRange } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingMonthly, setSavingMonthly] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -104,6 +105,27 @@ export default function Dashboard() {
     finally { setSaving(false); }
   };
 
+  const saveMonthly = async () => {
+    setSavingMonthly(true);
+    try {
+      // معاينة قبل الحفظ لإظهار رسالة تأكيد واضحة
+      const prev = await api.get('/monthly/preview/next');
+      const p = prev.data || {};
+      const msg = p.is_first
+        ? 'هذا أوّل جرد شهري. سيُحفظ snapshot لرأس المال الحالي فقط (الفترة السابقة فارغة).\n\nتأكيد؟'
+        : `سيُحفظ جرد شهري جديد:\n• رأس المال الحالي: $${Number(p.total_converted_usd).toFixed(2)}\n• مجموع أرباح ${p.daily_count} جرد يومي منذ آخر جرد شهري: $${Number(p.period_profit).toFixed(2)}\n\nتأكيد؟`;
+      if (!confirm(msg)) { setSavingMonthly(false); return; }
+
+      const res = await api.post('/monthly');
+      const d = res.data || {};
+      toast.success(d.is_first
+        ? 'تم حفظ أوّل جرد شهري'
+        : `تم حفظ الجرد الشهري — ربح الفترة: $${Number(d.period_profit).toFixed(2)}`);
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'خطأ في حفظ الجرد الشهري');
+    } finally { setSavingMonthly(false); }
+  };
+
   // Calculate totals
   const r2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
   const totalTry = r2(items.reduce((sum, i) => sum + (i.try_amount || 0), 0));
@@ -160,6 +182,16 @@ export default function Dashboard() {
             <Save size={18} />
             <span className="hidden sm:inline">حفظ الجرد</span>
             <span className="sm:hidden">حفظ</span>
+          </button>
+          <button
+            onClick={saveMonthly}
+            disabled={savingMonthly}
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-3 md:px-5 py-2 rounded-lg transition-colors disabled:opacity-50 font-bold text-sm md:text-base"
+            title="يحفظ snapshot لرأس المال + مجموع أرباح الفترة منذ آخر جرد شهري"
+          >
+            <CalendarRange size={18} />
+            <span className="hidden sm:inline">جرد شهري</span>
+            <span className="sm:hidden">شهري</span>
           </button>
         </div>
       </div>

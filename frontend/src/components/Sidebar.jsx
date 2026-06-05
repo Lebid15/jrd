@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Archive, Image, DollarSign, Settings, Menu, X, Landmark, MessageSquare } from 'lucide-react';
+import { LayoutDashboard, Archive, Image, DollarSign, Settings, Menu, X, Landmark, MessageSquare, CalendarRange } from 'lucide-react';
 
 const links = [
   { to: '/', icon: LayoutDashboard, label: 'الجرد' },
@@ -8,6 +8,7 @@ const links = [
   { to: '/bank', icon: Landmark, label: 'البنك' },
   { to: '/whatsapp', icon: MessageSquare, label: 'واتسآب' },
   { to: '/archive', icon: Archive, label: 'الأرشيف' },
+  { to: '/monthly', icon: CalendarRange, label: 'الجرد الشهري' },
   { to: '/photos', icon: Image, label: 'الصور' },
   { to: '/api-settings', icon: Settings, label: 'إعدادات API' },
 ];

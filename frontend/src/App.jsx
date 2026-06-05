@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Sidebar from './components/Sidebar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Archive from './pages/Archive.jsx';
+import MonthlyArchive from './pages/MonthlyArchive.jsx';
 import Photos from './pages/Photos.jsx';
 import Currency from './pages/Currency.jsx';
 import ApiSettings from './pages/ApiSettings.jsx';
@@ -17,6 +18,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/archive" element={<Archive />} />
+            <Route path="/monthly" element={<MonthlyArchive />} />
             <Route path="/photos" element={<Photos />} />
             <Route path="/currency" element={<Currency />} />
             <Route path="/api-settings" element={<ApiSettings />} />

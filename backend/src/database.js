@@ -119,6 +119,35 @@ db.exec(`
     sender_name TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  -- ─── الجرد الشهري ───────────────────────────────────────────────────────
+  -- snapshot دوري لرأس المال + مجموع الأرباح في الفترة بين هذا الجرد والسابق.
+  CREATE TABLE IF NOT EXISTS monthly_inventories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,                          -- تاريخ إنشاء الجرد الشهري (YYYY-MM-DD)
+    exchange_rate REAL NOT NULL,
+    total_try REAL NOT NULL DEFAULT 0,           -- إجمالي الليرة وقت الـ snapshot
+    total_usd REAL NOT NULL DEFAULT 0,           -- إجمالي الدولار وقت الـ snapshot
+    total_converted_usd REAL NOT NULL DEFAULT 0, -- المجموع الكلي بالدولار
+    previous_monthly_id INTEGER REFERENCES monthly_inventories(id) ON DELETE SET NULL,
+    previous_total_usd REAL DEFAULT 0,           -- إجمالي الجرد الشهري السابق (للمقارنة)
+    period_from TEXT DEFAULT '',                 -- بداية الفترة المغطّاة (created_at للسابق)
+    period_to TEXT DEFAULT '',                   -- نهاية الفترة (created_at لهذا الجرد)
+    period_profit REAL NOT NULL DEFAULT 0,       -- مجموع profit للجرود اليومية في الفترة
+    daily_count INTEGER NOT NULL DEFAULT 0,      -- عدد الجرود اليومية المضمَّنة
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS monthly_inventory_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    monthly_inventory_id INTEGER NOT NULL REFERENCES monthly_inventories(id) ON DELETE CASCADE,
+    item_id INTEGER,
+    item_name TEXT NOT NULL,
+    try_amount REAL DEFAULT 0,
+    usd_amount REAL DEFAULT 0,
+    notes TEXT DEFAULT ''
+  );
 `);
 
 // ─── Migration: add whatsapp_group_name column to api_configs ────────────────
