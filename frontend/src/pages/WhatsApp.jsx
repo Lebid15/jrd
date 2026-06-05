@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare, RotateCcw, Plus, X, Users, Check, Tags, Save } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { RefreshCw, LogOut, Smartphone, Wifi, WifiOff, MessageSquare, RotateCcw, Plus, X, Users, Check, Tags, Save, Trash2, Search, ChevronRight, ChevronLeft, Filter } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -14,7 +14,6 @@ const STATE_LABELS = {
 
 export default function WhatsApp() {
   const [status, setStatus] = useState({ state: 'idle' });
-  const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [allowedGroups, setAllowedGroups] = useState([]);
@@ -22,6 +21,19 @@ export default function WhatsApp() {
   const [newGroupName, setNewGroupName] = useState('');
   const [loadingGroups, setLoadingGroups] = useState(false);
   const [savingGroups, setSavingGroups] = useState(false);
+
+  // ─── الرسائل: ترقيم + فلترة + اختيار جماعي ───
+  const [messages, setMessages] = useState([]);
+  const [msgPage, setMsgPage] = useState(1);
+  const [msgPageSize, setMsgPageSize] = useState(20);
+  const [msgTotal, setMsgTotal] = useState(0);
+  const [msgTotalPages, setMsgTotalPages] = useState(1);
+  const [financialOnly, setFinancialOnly] = useState(true);
+  const [msgQuery, setMsgQuery] = useState('');
+  const [msgSearch, setMsgSearch] = useState(''); // قيمة مُرسَلة فعلياً (بعد debounce)
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [msgLoading, setMsgLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // الكلمات المفتاحية
   const [keywords, setKeywords] = useState({ us: [], them: [], try: [], usd: [], ignore: [], admin_token: 'admin' });
@@ -39,11 +51,34 @@ export default function WhatsApp() {
   }, []);
 
   const loadMessages = useCallback(async () => {
+    setMsgLoading(true);
     try {
-      const res = await api.get('/internal/whatsapp/messages?limit=30');
-      setMessages(res.data);
-    } catch {}
-  }, []);
+      const params = new URLSearchParams({
+        page: String(msgPage),
+        pageSize: String(msgPageSize),
+      });
+      if (financialOnly) params.set('financial_only', '1');
+      if (msgSearch) params.set('q', msgSearch);
+      const res = await api.get(`/internal/whatsapp/messages?${params.toString()}`);
+      const data = res.data || {};
+      setMessages(Array.isArray(data.items) ? data.items : []);
+      setMsgTotal(data.total || 0);
+      setMsgTotalPages(data.totalPages || 1);
+      // مسح المحدّدات التي لم تعد ظاهرة
+      setSelectedIds(prev => {
+        const visible = new Set((data.items || []).map(m => m.id));
+        const next = new Set();
+        for (const id of prev) if (visible.has(id)) next.add(id);
+        return next;
+      });
+    } catch {
+      setMessages([]);
+      setMsgTotal(0);
+      setMsgTotalPages(1);
+    } finally {
+      setMsgLoading(false);
+    }
+  }, [msgPage, msgPageSize, financialOnly, msgSearch]);
 
   const loadAllowedGroups = useCallback(async () => {
     try {
@@ -133,14 +168,82 @@ export default function WhatsApp() {
     return () => clearInterval(interval);
   }, [loadStatus]);
 
-  // لما تتغير الحالة لـ connected، حمّل الرسائل
+  // إعادة تحميل الرسائل عند تغيّر الصفحة/الفلاتر/البحث
+  useEffect(() => {
+    if (status.state === 'connected') loadMessages();
+  }, [loadMessages, status.state]);
+
+  // debounce لمربع البحث: 400ms
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setMsgSearch(msgQuery.trim());
+      setMsgPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [msgQuery]);
+
+  // إعادة التهيئة عند تغيّر الفلتر/حجم الصفحة
+  useEffect(() => { setMsgPage(1); }, [financialOnly, msgPageSize]);
+
+  // لما تتغير الحالة لـ connected، حمّل البيانات
   useEffect(() => {
     if (status.state === 'connected') {
-      loadMessages();
       loadAllowedGroups();
       loadKeywords();
     }
-  }, [status.state, loadMessages, loadAllowedGroups, loadKeywords]);
+  }, [status.state, loadAllowedGroups, loadKeywords]);
+
+  // ─── اختيار الرسائل ───
+  const allVisibleIds = useMemo(() => messages.map(m => m.id), [messages]);
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every(id => selectedIds.has(id));
+  const someSelected = selectedIds.size > 0 && !allSelected;
+
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allVisibleIds));
+    }
+  };
+
+  const deleteOne = async (id) => {
+    if (!confirm('حذف هذه الرسالة؟')) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/internal/whatsapp/messages/${id}`);
+      toast.success('تم الحذف');
+      loadMessages();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'فشل الحذف');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    if (!confirm(`حذف ${ids.length} رسالة؟`)) return;
+    setDeleting(true);
+    try {
+      await api.post('/internal/whatsapp/messages/delete-bulk', { ids });
+      toast.success(`تم حذف ${ids.length} رسالة`);
+      setSelectedIds(new Set());
+      loadMessages();
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'فشل الحذف الجماعي');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleStart = async () => {
     setStarting(true);
@@ -430,28 +533,200 @@ export default function WhatsApp() {
       )}
 
       {/* ─── آخر الرسائل ─── */}
-      {messages.length > 0 && (
-        <div className="bg-white rounded-2xl shadow border border-gray-100">
-          <div className="flex items-center justify-between p-4 border-b border-gray-100">
-            <h2 className="font-bold text-gray-700">آخر الرسائل الواردة</h2>
-            <button onClick={loadMessages} className="text-gray-400 hover:text-gray-600">
-              <RefreshCw size={16} />
-            </button>
+      {status.state === 'connected' && (
+        <div className="bg-white rounded-2xl shadow border border-gray-100 mb-6">
+          {/* الهيدر: العنوان + الإجراءات */}
+          <div className="flex flex-wrap items-center justify-between gap-2 p-4 border-b border-gray-100">
+            <h2 className="font-bold text-gray-700 flex items-center gap-2">
+              <MessageSquare size={18} className="text-green-600" />
+              الرسائل {financialOnly ? 'المالية' : 'كلّها'}
+              <span className="text-xs text-gray-400 font-normal">({msgTotal})</span>
+            </h2>
+            <div className="flex items-center gap-2">
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={deleteSelected}
+                  disabled={deleting}
+                  className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50"
+                  title="حذف المحدّد"
+                >
+                  <Trash2 size={14} />
+                  حذف ({selectedIds.size})
+                </button>
+              )}
+              <button
+                onClick={loadMessages}
+                disabled={msgLoading}
+                className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                title="تحديث"
+              >
+                <RefreshCw size={16} className={msgLoading ? 'animate-spin' : ''} />
+              </button>
+            </div>
           </div>
-          <div className="divide-y divide-gray-50 max-h-96 overflow-y-auto">
-            {messages.map(msg => (
-              <div key={msg.id} className="px-4 py-3 hover:bg-gray-50">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium truncate max-w-[160px]">
-                    {msg.group_name || msg.group_id}
-                  </span>
-                  <span className="text-xs text-gray-400">{msg.sender_name || msg.sender}</span>
-                </div>
-                <p className="text-sm text-gray-700 truncate">{msg.text}</p>
-                <p className="text-xs text-gray-300 mt-0.5">{msg.created_at}</p>
+
+          {/* شريط الفلترة */}
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50/50">
+            <label className="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={financialOnly}
+                onChange={e => setFinancialOnly(e.target.checked)}
+                className="rounded"
+              />
+              <Filter size={14} className="text-purple-600" />
+              مالية فقط
+            </label>
+
+            <div className="relative flex-1 min-w-[180px]">
+              <Search size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                value={msgQuery}
+                onChange={e => setMsgQuery(e.target.value)}
+                placeholder="بحث في النص / المرسل / المجموعة..."
+                className="w-full pr-8 pl-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-green-400"
+                dir="auto"
+              />
+            </div>
+
+            <select
+              value={msgPageSize}
+              onChange={e => setMsgPageSize(parseInt(e.target.value))}
+              className="px-2 py-1.5 border border-gray-200 rounded-lg text-xs bg-white"
+              title="عدد الصفوف"
+            >
+              <option value={20}>20 / صفحة</option>
+              <option value={30}>30 / صفحة</option>
+              <option value={50}>50 / صفحة</option>
+              <option value={100}>100 / صفحة</option>
+            </select>
+          </div>
+
+          {/* الجدول */}
+          {messages.length === 0 ? (
+            <p className="px-4 py-10 text-center text-sm text-gray-400">
+              {msgLoading ? 'جارٍ التحميل...' : (financialOnly ? 'لا توجد رسائل مالية بعد.' : 'لا توجد رسائل.')}
+            </p>
+          ) : (
+            <>
+              {/* صفّ التحديد الجماعي */}
+              <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  ref={el => { if (el) el.indeterminate = someSelected; }}
+                  onChange={toggleSelectAll}
+                  className="rounded"
+                />
+                <span>تحديد الكلّ في هذه الصفحة</span>
               </div>
-            ))}
-          </div>
+
+              <div className="divide-y divide-gray-50">
+                {messages.map(msg => {
+                  const isFinancial = !!msg.tx_id;
+                  const isUs = msg.tx_source === 'us';
+                  const isLana = msg.tx_direction === 'lana';
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors ${selectedIds.has(msg.id) ? 'bg-blue-50/50' : ''}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(msg.id)}
+                        onChange={() => toggleSelect(msg.id)}
+                        className="mt-1 rounded"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium truncate max-w-[180px]" dir="auto">
+                            {msg.group_name || msg.group_id}
+                          </span>
+                          <span className="text-xs text-gray-500" dir="auto">{msg.sender_name || msg.sender}</span>
+                          {isFinancial && (
+                            <>
+                              <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${isLana ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                                {isLana ? 'لنا' : 'لكم'}
+                              </span>
+                              <span className="text-[11px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">
+                                {msg.tx_amount} {msg.tx_currency === 'USD' ? '$' : '₺'}
+                              </span>
+                              <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono ${msg.tx_delta >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                Δ {msg.tx_delta >= 0 ? '+' : ''}{msg.tx_delta}
+                              </span>
+                              <span className="text-[11px] text-gray-400">
+                                مصدر: {isUs ? 'نحن' : 'هم'}
+                              </span>
+                              {msg.tx_item_name && (
+                                <span className="text-[11px] bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">
+                                  {msg.tx_item_name}
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-700 break-words" dir="auto">{msg.text}</p>
+                        <p className="text-xs text-gray-300 mt-0.5">{msg.created_at}</p>
+                      </div>
+                      <button
+                        onClick={() => deleteOne(msg.id)}
+                        disabled={deleting}
+                        className="text-gray-300 hover:text-red-600 disabled:opacity-50"
+                        title="حذف"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ترقيم الصفحات */}
+              {msgTotalPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 text-sm">
+                  <div className="text-xs text-gray-500">
+                    صفحة {msgPage} من {msgTotalPages} — إجمالي {msgTotal}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setMsgPage(1)}
+                      disabled={msgPage === 1 || msgLoading}
+                      className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30 text-xs"
+                    >
+                      الأولى
+                    </button>
+                    <button
+                      onClick={() => setMsgPage(p => Math.max(1, p - 1))}
+                      disabled={msgPage === 1 || msgLoading}
+                      className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30"
+                      title="السابقة"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                    <span className="px-3 py-1 bg-green-50 text-green-700 rounded font-bold text-xs">
+                      {msgPage}
+                    </span>
+                    <button
+                      onClick={() => setMsgPage(p => Math.min(msgTotalPages, p + 1))}
+                      disabled={msgPage >= msgTotalPages || msgLoading}
+                      className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30"
+                      title="التالية"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <button
+                      onClick={() => setMsgPage(msgTotalPages)}
+                      disabled={msgPage >= msgTotalPages || msgLoading}
+                      className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-30 text-xs"
+                    >
+                      الأخيرة
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 

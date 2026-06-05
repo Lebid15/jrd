@@ -352,15 +352,102 @@ router.post('/whatsapp/logout', async (req, res) => {
 });
 
 /**
- * GET /api/internal/whatsapp/messages?limit=50
- * آخر الرسائل الواردة
+ * GET /api/internal/whatsapp/messages
+ * Query params:
+ *   - page (default 1)
+ *   - pageSize (default 20, max 100)
+ *   - financial_only (1 = الرسائل المالية فقط — التي حُلِّلت كحركة لنا/لكم)
+ *   - q (بحث في النص أو اسم المرسل أو المجموعة)
+ *   - limit (توافق رجعي: لو مُمرَّر، يُتجاهل page/pageSize)
+ * Returns: { items, total, page, pageSize, totalPages }
+ *  - عند تمرير `limit` فقط: يُرجع المصفوفة المسطّحة (للحفاظ على التوافق).
  */
 router.get('/whatsapp/messages', (req, res) => {
-  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-  const rows = db.prepare(`
-    SELECT * FROM whatsapp_messages ORDER BY id DESC LIMIT ?
-  `).all(limit);
-  res.json(rows);
+  // التوافق الرجعي: لو `limit` مُمرَّر، يرجع المصفوفة كما كان
+  if (req.query.limit && !req.query.page && !req.query.pageSize) {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const rows = db.prepare(`
+      SELECT * FROM whatsapp_messages ORDER BY id DESC LIMIT ?
+    `).all(limit);
+    return res.json(rows);
+  }
+
+  const page = Math.max(parseInt(req.query.page) || 1, 1);
+  const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 20, 1), 100);
+  const offset = (page - 1) * pageSize;
+  const financialOnly = req.query.financial_only === '1' || req.query.financial_only === 'true';
+  const q = String(req.query.q || '').trim();
+
+  const where = [];
+  const params = [];
+
+  if (financialOnly) {
+    // الرسائل المالية = التي لها سجلّ في whatsapp_transactions
+    where.push(`EXISTS (SELECT 1 FROM whatsapp_transactions t WHERE t.message_id = m.id)`);
+  }
+
+  if (q) {
+    where.push(`(m.text LIKE ? OR m.sender_name LIKE ? OR m.group_name LIKE ?)`);
+    const like = `%${q}%`;
+    params.push(like, like, like);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const totalRow = db.prepare(`
+    SELECT COUNT(*) as cnt FROM whatsapp_messages m ${whereSql}
+  `).get(...params);
+  const total = totalRow?.cnt || 0;
+
+  const items = db.prepare(`
+    SELECT
+      m.*,
+      t.id        as tx_id,
+      t.source    as tx_source,
+      t.direction as tx_direction,
+      t.currency  as tx_currency,
+      t.amount    as tx_amount,
+      t.delta     as tx_delta,
+      t.balance_after as tx_balance_after,
+      i.name      as tx_item_name
+    FROM whatsapp_messages m
+    LEFT JOIN whatsapp_transactions t ON t.message_id = m.id
+    LEFT JOIN items i ON i.id = t.item_id
+    ${whereSql}
+    ORDER BY m.id DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, pageSize, offset);
+
+  res.json({
+    items,
+    total,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  });
+});
+
+/**
+ * DELETE /api/internal/whatsapp/messages/:id
+ * حذف رسالة واحدة (وحركتها المرتبطة عبر FK ON DELETE SET NULL — تبقى الحركة).
+ */
+router.delete('/whatsapp/messages/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
+  const info = db.prepare('DELETE FROM whatsapp_messages WHERE id = ?').run(id);
+  res.json({ ok: true, deleted: info.changes });
+});
+
+/**
+ * POST /api/internal/whatsapp/messages/delete-bulk
+ * body: { ids: [1,2,3] }
+ */
+router.post('/whatsapp/messages/delete-bulk', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(n => parseInt(n)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids array required' });
+  const placeholders = ids.map(() => '?').join(',');
+  const info = db.prepare(`DELETE FROM whatsapp_messages WHERE id IN (${placeholders})`).run(...ids);
+  res.json({ ok: true, deleted: info.changes });
 });
 
 /**
