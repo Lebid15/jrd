@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X } from 'lucide-react';
+import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -13,6 +13,15 @@ export default function Bank() {
   const [loading, setLoading] = useState(true);
   const [editingBalance, setEditingBalance] = useState(false);
   const [balanceInput, setBalanceInput] = useState('');
+
+  // ─── تشخيص webhook ─────
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [diag, setDiag] = useState(null);
+  const [smsLog, setSmsLog] = useState([]);
+  const [smsTestText, setSmsTestText] = useState('');
+  const [smsTestResult, setSmsTestResult] = useState(null);
+  const [smsTestBusy, setSmsTestBusy] = useState(false);
+  const [diagBusy, setDiagBusy] = useState(false);
 
   // ─── تحميل البيانات ─────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -34,6 +43,63 @@ export default function Bank() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // ─── تشخيص webhook ─────────────────────────────────────────────────────
+  const loadDiagnostics = useCallback(async () => {
+    setDiagBusy(true);
+    try {
+      const [d, log] = await Promise.all([
+        api.get('/bank/diagnostics'),
+        api.get('/bank/sms-log?limit=30'),
+      ]);
+      setDiag(d.data);
+      setSmsLog(Array.isArray(log.data) ? log.data : []);
+    } catch {
+      toast.error('فشل تحميل تشخيص الـ webhook');
+    } finally {
+      setDiagBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (diagOpen) loadDiagnostics();
+  }, [diagOpen, loadDiagnostics]);
+
+  const runSmsTest = async () => {
+    const text = smsTestText.trim();
+    if (!text) return toast.error('الصق نص الرسالة أوّلاً');
+    setSmsTestBusy(true);
+    setSmsTestResult(null);
+    try {
+      const res = await api.post('/bank/sms-test', { body: text, sender: 'manual-test' });
+      setSmsTestResult({ ok: true, data: res.data });
+      toast.success('تم — راجع النتيجة أدناه');
+      loadData();
+      loadDiagnostics();
+    } catch (e) {
+      setSmsTestResult({ ok: false, status: e.response?.status, data: e.response?.data });
+      toast.warn('انتهت المحاولة — راجع التفاصيل');
+      loadDiagnostics();
+    } finally {
+      setSmsTestBusy(false);
+    }
+  };
+
+  const clearSmsLog = async () => {
+    if (!confirm('تفريغ سجلّ webhook بالكامل؟')) return;
+    try {
+      await api.delete('/bank/sms-log');
+      toast.success('تم التفريغ');
+      loadDiagnostics();
+    } catch { toast.error('فشل التفريغ'); }
+  };
+
+  const deleteLogRow = async (id) => {
+    try {
+      await api.delete(`/bank/sms-log/${id}`);
+      loadDiagnostics();
+    } catch { toast.error('فشل الحذف'); }
+  };
 
   // ─── تعديل الرصيد يدوياً ─────────────────────────────────────────────────
   const startEdit = () => {
@@ -83,6 +149,23 @@ export default function Bank() {
   return (
     <div className="max-w-3xl mx-auto" dir="rtl">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">🏦 كويت ترك</h1>
+
+      {/* ─── لوحة تشخيص webhook ─── */}
+      <DiagnosticsPanel
+        open={diagOpen}
+        setOpen={setDiagOpen}
+        diag={diag}
+        smsLog={smsLog}
+        smsTestText={smsTestText}
+        setSmsTestText={setSmsTestText}
+        smsTestResult={smsTestResult}
+        smsTestBusy={smsTestBusy}
+        runSmsTest={runSmsTest}
+        clearSmsLog={clearSmsLog}
+        deleteLogRow={deleteLogRow}
+        reload={loadDiagnostics}
+        busy={diagBusy}
+      />
 
       {/* ─── بطاقة الرصيد ─── */}
       <div className="bg-gradient-to-l from-blue-600 to-blue-800 text-white rounded-2xl p-6 mb-6 shadow-lg">
@@ -190,6 +273,199 @@ export default function Bank() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── مكوّن لوحة التشخيص ──────────────────────────────────────────────────────
+const STATUS_BADGE = {
+  applied:      { label: 'تم التطبيق',       color: 'bg-green-50 text-green-700 border-green-200' },
+  no_pattern:   { label: 'نمط غير معروف',    color: 'bg-orange-50 text-orange-700 border-orange-200' },
+  no_bank_item: { label: 'لا بند بنكي',      color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+  unauthorized: { label: 'سر خاطئ',          color: 'bg-red-50 text-red-700 border-red-200' },
+  no_body:      { label: 'جسم فارغ',         color: 'bg-gray-50 text-gray-600 border-gray-200' },
+};
+
+function DiagnosticsPanel({
+  open, setOpen, diag, smsLog,
+  smsTestText, setSmsTestText, smsTestResult, smsTestBusy, runSmsTest,
+  clearSmsLog, deleteLogRow, reload, busy,
+}) {
+  const lastLog = diag?.last_webhook_log;
+  const lastLogAt = lastLog?.created_at;
+  const minutesSince = lastLogAt
+    ? Math.round((Date.now() - new Date(lastLogAt + 'Z').getTime()) / 60000)
+    : null;
+
+  return (
+    <div className="bg-white rounded-2xl shadow border border-gray-100 mb-6">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <Activity className="text-blue-500" size={20} />
+          <span className="font-bold text-gray-700">تشخيص استقبال SMS</span>
+          {!open && lastLog && (
+            <span className={`text-xs px-2 py-0.5 rounded border ${STATUS_BADGE[lastLog.parse_status]?.color || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
+              آخر طلب: {STATUS_BADGE[lastLog.parse_status]?.label || lastLog.parse_status}
+              {minutesSince !== null && ` — قبل ${minutesSince} د`}
+            </span>
+          )}
+          {!open && !lastLog && (
+            <span className="text-xs px-2 py-0.5 rounded border bg-gray-50 text-gray-500 border-gray-200">
+              لم يصل أي طلب بعد
+            </span>
+          )}
+        </div>
+        {open ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 p-4 space-y-4">
+          {/* ───── معلومات الحالة ───── */}
+          {diag && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">السر مضبوط</p>
+                <p className={diag.secret_configured ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}>
+                  {diag.secret_configured ? <CheckCircle2 size={16} className="inline" /> : <AlertTriangle size={16} className="inline" />}
+                  {' '}{diag.secret_configured ? 'نعم' : 'لا'}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">البنود البنكية</p>
+                <p className="font-bold text-gray-700">
+                  {(diag.bank_items || []).filter(i => i.is_active).length} / {(diag.bank_items || []).length}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">آخر طلب</p>
+                <p className="text-xs text-gray-600">
+                  {lastLogAt ? `قبل ${minutesSince} د` : '—'}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-gray-500 text-xs mb-1">آخر معاملة</p>
+                <p className="text-xs text-gray-600">
+                  {diag.last_transaction?.created_at || '—'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* تنبيه: لم يصل طلب منذ فترة طويلة */}
+          {minutesSince !== null && minutesSince > 60 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm text-orange-800">
+              <AlertTriangle size={16} className="inline ml-1" />
+              لم يصل أي طلب منذ <strong>{minutesSince}</strong> دقيقة. تحقّق من تطبيق <strong>SMS Forwarder</strong> على الهاتف:
+              <ul className="list-disc list-inside mt-1 mr-4 text-xs space-y-0.5">
+                <li>هل التطبيق ما زال يعمل؟ (افتحه يدوياً)</li>
+                <li>هل أزلت توفير البطارية له (Battery optimization → Don't optimize)؟</li>
+                <li>هل هو في القائمة المسموح لها بالعمل في الخلفية؟</li>
+                <li>جرّب إرسال SMS اختبار من رقم آخر إلى هاتف البنك للتأكّد من الاستقبال.</li>
+              </ul>
+            </div>
+          )}
+
+          {!diag?.secret_configured && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+              <AlertTriangle size={16} className="inline ml-1" />
+              متغيّر <code className="bg-red-100 px-1 rounded">SMS_WEBHOOK_SECRET</code> غير مضبوط في Railway. الـ webhook يعمل بدون حماية!
+            </div>
+          )}
+
+          {/* ───── أداة اختبار يدوية ───── */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <p className="font-bold text-gray-700 text-sm mb-2 flex items-center gap-2">
+              <Play size={14} /> الصق نص رسالة SMS فعلية للاختبار
+            </p>
+            <textarea
+              value={smsTestText}
+              onChange={e => setSmsTestText(e.target.value)}
+              placeholder="مثال: Hesabınıza FAST ile 1.500,00 TL para geldi. Gönderen: AHMET. Tutar: 1500,00 TL. İşlem Zamanı: ..."
+              rows={4}
+              className="w-full text-sm bg-white rounded p-2 border border-blue-300 outline-none focus:border-blue-500 font-mono"
+              dir="ltr"
+            />
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={runSmsTest}
+                disabled={smsTestBusy || !smsTestText.trim()}
+                className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+              >
+                {smsTestBusy ? <RefreshCw size={14} className="inline animate-spin ml-1" /> : <Play size={14} className="inline ml-1" />}
+                تشغيل
+              </button>
+              {smsTestResult && (
+                <span className={`text-xs px-2 py-1 rounded ${smsTestResult.ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                  {smsTestResult.ok ? 'نجح' : `فشل (${smsTestResult.status})`}
+                </span>
+              )}
+            </div>
+            {smsTestResult && (
+              <pre className="mt-2 text-xs bg-white border border-blue-200 rounded p-2 overflow-x-auto" dir="ltr">
+                {JSON.stringify(smsTestResult.data, null, 2)}
+              </pre>
+            )}
+          </div>
+
+          {/* ───── سجلّ الطلبات ───── */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="font-bold text-gray-700 text-sm">سجلّ آخر {smsLog.length} طلب</p>
+              <div className="flex items-center gap-2">
+                <button onClick={reload} disabled={busy} className="text-gray-400 hover:text-gray-600">
+                  <RefreshCw size={14} className={busy ? 'animate-spin' : ''} />
+                </button>
+                {smsLog.length > 0 && (
+                  <button onClick={clearSmsLog} className="text-red-400 hover:text-red-600 text-xs">
+                    تفريغ السجلّ
+                  </button>
+                )}
+              </div>
+            </div>
+            {smsLog.length === 0 ? (
+              <p className="text-center text-gray-400 text-sm py-6 bg-gray-50 rounded">
+                لا توجد طلبات بعد. أرسل SMS تجريبية من تطبيق SMS Forwarder للتأكّد من وصولها.
+              </p>
+            ) : (
+              <div className="space-y-1 max-h-80 overflow-y-auto">
+                {smsLog.map(row => {
+                  const badge = STATUS_BADGE[row.parse_status] || { label: row.parse_status, color: 'bg-gray-100 text-gray-600 border-gray-200' };
+                  return (
+                    <div key={row.id} className="flex items-start gap-2 p-2 border border-gray-100 rounded hover:bg-gray-50 text-xs">
+                      <span className={`flex-shrink-0 px-2 py-0.5 rounded border text-[10px] ${badge.color}`}>{badge.label}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-gray-500 text-[10px]">
+                          {row.created_at} • {row.sender || 'لا مُرسِل'} • {row.ip}
+                        </p>
+                        {row.error_message && (
+                          <p className="text-red-600 text-[11px]">{row.error_message}</p>
+                        )}
+                        <p className="text-gray-700 break-all line-clamp-2" dir="ltr">{row.raw_body}</p>
+                        {row.amount > 0 && (
+                          <p className="text-[11px] text-gray-500 mt-0.5">
+                            {row.direction === 'in' ? '⬇' : '⬆'} {row.amount} ₺
+                            {row.transaction_id ? ` • TX #${row.transaction_id}` : ''}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => deleteLogRow(row.id)}
+                        className="flex-shrink-0 text-gray-300 hover:text-red-500"
+                        title="حذف من السجلّ"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

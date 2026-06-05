@@ -156,6 +156,26 @@ if (!cols.includes('whatsapp_group_name')) {
   db.exec(`ALTER TABLE api_configs ADD COLUMN whatsapp_group_name TEXT DEFAULT ''`);
 }
 
+// ─── Migration: bank_sms_log — سجلّ خام لكل طلب يصل إلى /api/bank/sms-webhook
+// نخزّن كل محاولة (نجاح/فشل) حتى يستطيع المستخدم تشخيص لماذا توقّفت رسائل البنك.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS bank_sms_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT DEFAULT (datetime('now')),
+    ip TEXT DEFAULT '',
+    secret_ok INTEGER DEFAULT 1,         -- 0 إذا فشل التحقّق من SMS_WEBHOOK_SECRET
+    parse_status TEXT DEFAULT '',        -- ok | no_body | no_pattern | no_bank_item | applied
+    error_message TEXT DEFAULT '',
+    sender TEXT DEFAULT '',
+    raw_body TEXT DEFAULT '',
+    item_id INTEGER,
+    direction TEXT DEFAULT '',           -- in | out | ''
+    amount REAL,
+    transaction_id INTEGER               -- bank_transactions.id إذا تم التطبيق
+  );
+  CREATE INDEX IF NOT EXISTS idx_bank_sms_log_created ON bank_sms_log(created_at DESC);
+`);
+
 // ─── Default settings ────────────────────────────────────────────────────────
 const seedSetting = (key, val) => {
   const exists = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key);

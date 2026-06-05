@@ -62,19 +62,27 @@ function parseSms(body) {
  * أمان: يتحقق من SMS_WEBHOOK_SECRET في query أو header
  * Body: { sender: string, body: string, item_id?: number }
  */
-router.post('/sms-webhook', (req, res) => {
-  const secret = process.env.SMS_WEBHOOK_SECRET;
-  if (secret) {
-    const provided = req.query.secret || req.headers['x-webhook-secret'];
-    if (provided !== secret) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+/**
+ * core processing — يُستخدَم من webhook و من sms-test معاً
+ * يسجّل دائماً في bank_sms_log ويرجع كائن النتيجة.
+ */
+function processSmsRequest({ ip, sender, smsBody, item_id, secret_ok = true }) {
+  const insertLog = db.prepare(`
+    INSERT INTO bank_sms_log
+      (ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // 1) فشل تحقّق السر
+  if (!secret_ok) {
+    insertLog.run(ip || '', 0, 'unauthorized', 'Bad SMS_WEBHOOK_SECRET', sender || '', smsBody || '', null, '', null, null);
+    return { http: 401, body: { error: 'Unauthorized' } };
   }
 
-  const { sender = '', body: smsBody = '', item_id } = req.body;
-
-  if (!smsBody) {
-    return res.status(400).json({ error: 'body is required' });
+  // 2) جسم فارغ
+  if (!smsBody || !String(smsBody).trim()) {
+    insertLog.run(ip || '', 1, 'no_body', 'Empty body', sender || '', smsBody || '', null, '', null, null);
+    return { http: 400, body: { error: 'body is required' } };
   }
 
   // نستخرج نص الرسالة الفعلي — بعض التطبيقات ترسل "From : X\nنص الرسالة"
@@ -83,8 +91,11 @@ router.post('/sms-webhook', (req, res) => {
     : smsBody.trim();
 
   const parsed = parseSms(bodyClean);
+
+  // 3) نمط غير معروف
   if (!parsed) {
-    return res.status(422).json({ error: 'Could not parse SMS', raw: bodyClean });
+    insertLog.run(ip || '', 1, 'no_pattern', 'Could not parse SMS', sender || '', bodyClean, null, '', null, null);
+    return { http: 422, body: { error: 'Could not parse SMS', raw: bodyClean } };
   }
 
   // إيجاد البند البنكي — إما بـ item_id أو أول بند من نوع 'bank'
@@ -95,8 +106,14 @@ router.post('/sms-webhook', (req, res) => {
     bankItem = db.prepare("SELECT i.id, cv.try_amount FROM items i LEFT JOIN current_values cv ON cv.item_id = i.id WHERE i.type = 'bank' AND i.is_active = 1 ORDER BY i.sort_order ASC LIMIT 1").get();
   }
 
+  // 4) لا يوجد بند بنكي مُفعَّل
   if (!bankItem) {
-    return res.status(404).json({ error: 'No bank item found. Create an item with type=bank first.' });
+    insertLog.run(
+      ip || '', 1, 'no_bank_item',
+      'No active item with type=bank. Add a bank item or activate it.',
+      sender || '', bodyClean, null, parsed.direction, parsed.amount, null
+    );
+    return { http: 404, body: { error: 'No bank item found. Create an item with type=bank first.' } };
   }
 
   const currentBalance = bankItem.try_amount || 0;
@@ -104,8 +121,8 @@ router.post('/sms-webhook', (req, res) => {
     ? currentBalance + parsed.amount
     : currentBalance - parsed.amount;
 
-  // تحديث الرصيد + حفظ المعاملة — atomic
-  const updateTx = db.transaction(() => {
+  // 5) تطبيق ناجح — atomic: update balance + insert transaction + log
+  const txId = db.transaction(() => {
     db.prepare('UPDATE current_values SET try_amount = ? WHERE item_id = ?')
       .run(newBalance, bankItem.id);
 
@@ -122,19 +139,109 @@ router.post('/sms-webhook', (req, res) => {
       bodyClean,
       newBalance
     );
-    return result.lastInsertRowid;
-  });
+    const newTxId = result.lastInsertRowid;
 
-  const txId = updateTx();
+    insertLog.run(
+      ip || '', 1, 'applied', '',
+      sender || '', bodyClean,
+      bankItem.id, parsed.direction, parsed.amount, newTxId
+    );
+    return newTxId;
+  })();
 
+  return {
+    http: 200,
+    body: {
+      success: true,
+      transaction_id: txId,
+      direction: parsed.direction,
+      amount: parsed.amount,
+      balance_before: currentBalance,
+      balance_after: newBalance,
+      sender_receiver: parsed.senderReceiver,
+    },
+  };
+}
+
+router.post('/sms-webhook', (req, res) => {
+  const ip = req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '';
+  const secret = process.env.SMS_WEBHOOK_SECRET;
+  let secret_ok = true;
+  if (secret) {
+    const provided = req.query.secret || req.headers['x-webhook-secret'];
+    if (provided !== secret) secret_ok = false;
+  }
+
+  const { sender = '', body: smsBody = '', item_id } = req.body || {};
+  const result = processSmsRequest({ ip, sender, smsBody, item_id, secret_ok });
+  res.status(result.http).json(result.body);
+});
+
+/**
+ * POST /api/bank/sms-test
+ * أداة اختبار يدوية: يلصق المستخدم نص SMS من الواجهة ويرى لماذا فشل/نجح.
+ * body: { body: string, sender?: string, item_id?: number }
+ * (لا تحتاج secret لأنها مسار داخلي للواجهة على نفس النطاق)
+ */
+router.post('/sms-test', (req, res) => {
+  const ip = 'manual-test';
+  const { sender = '', body: smsBody = '', item_id } = req.body || {};
+  const result = processSmsRequest({ ip, sender, smsBody, item_id, secret_ok: true });
+  res.status(result.http === 401 ? 200 : result.http).json(result.body);
+});
+
+/**
+ * GET /api/bank/sms-log?limit=50
+ * سجلّ كل طلب وصل إلى webhook (نجاح/فشل + سبب).
+ */
+router.get('/sms-log', (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 50, 500);
+  const rows = db.prepare(`
+    SELECT id, created_at, ip, secret_ok, parse_status, error_message,
+           sender, raw_body, item_id, direction, amount, transaction_id
+    FROM bank_sms_log
+    ORDER BY id DESC LIMIT ?
+  `).all(limit);
+  res.json(rows);
+});
+
+/**
+ * DELETE /api/bank/sms-log — تفريغ السجلّ كاملاً.
+ * DELETE /api/bank/sms-log/:id — حذف صفّ واحد.
+ */
+router.delete('/sms-log', (req, res) => {
+  const info = db.prepare('DELETE FROM bank_sms_log').run();
+  res.json({ success: true, deleted: info.changes });
+});
+router.delete('/sms-log/:id', (req, res) => {
+  const info = db.prepare('DELETE FROM bank_sms_log WHERE id = ?').run(req.params.id);
+  res.json({ success: true, deleted: info.changes });
+});
+
+/**
+ * GET /api/bank/diagnostics — حالة الـ webhook العامة
+ * - هل secret مضبوط
+ * - عدد البنود البنكية المفعَّلة
+ * - آخر طلب وصل + آخر معاملة طُبِّقت
+ */
+router.get('/diagnostics', (req, res) => {
+  const secretConfigured = !!process.env.SMS_WEBHOOK_SECRET;
+  const bankItems = db.prepare("SELECT id, name, is_active FROM items WHERE type = 'bank' ORDER BY sort_order").all();
+  const lastLog = db.prepare('SELECT id, created_at, parse_status, error_message FROM bank_sms_log ORDER BY id DESC LIMIT 1').get();
+  const lastTx = db.prepare('SELECT id, created_at, direction, amount FROM bank_transactions ORDER BY id DESC LIMIT 1').get();
+  const counts = db.prepare(`
+    SELECT parse_status, COUNT(*) as n
+    FROM bank_sms_log
+    WHERE created_at >= datetime('now', '-7 days')
+    GROUP BY parse_status
+  `).all();
   res.json({
-    success: true,
-    transaction_id: txId,
-    direction: parsed.direction,
-    amount: parsed.amount,
-    balance_before: currentBalance,
-    balance_after: newBalance,
-    sender_receiver: parsed.senderReceiver,
+    secret_configured: secretConfigured,
+    bank_items: bankItems,
+    last_webhook_log: lastLog || null,
+    last_transaction: lastTx || null,
+    counts_last_7d: counts,
+    webhook_path: '/api/bank/sms-webhook',
   });
 });
 
