@@ -153,9 +153,11 @@ export default function WhatsApp() {
     }
   };
 
-  const updateKwList = (key, value) => {
-    const arr = String(value || '').split(/[,،\n]+/).map(s => s.trim()).filter(Boolean);
-    setKeywords(prev => ({ ...prev, [key]: arr }));
+  const updateKwList = (key, arr) => {
+    const clean = Array.isArray(arr)
+      ? arr.map(s => String(s || '').trim()).filter(Boolean)
+      : String(arr || '').split(/[,،\n]+/).map(s => s.trim()).filter(Boolean);
+    setKeywords(prev => ({ ...prev, [key]: clean }));
   };
 
   useEffect(() => {
@@ -468,7 +470,9 @@ export default function WhatsApp() {
           </div>
 
           <p className="text-xs text-gray-500 mb-4">
-            افصل بين الكلمات بفاصلة أو سطر جديد. غير حسّاس لحالة الأحرف.
+            افصل بين الكلمات بفاصلة (، أو ,) أو سطر جديد. غير حسّاس لحالة الأحرف.
+            <br />
+            <span className="text-gray-400">المحلّل يقبل تمديد الحروف تلقائياً (مثل «لنا» ↔ «لنااااا» ↔ «للللنا»).</span>
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -476,35 +480,35 @@ export default function WhatsApp() {
               label="مرادفات «لنا»"
               hint="عند ورود إحداها → عملية وارد لنا"
               color="green"
-              value={keywords.us.join('، ')}
+              value={keywords.us}
               onChange={v => updateKwList('us', v)}
             />
             <KwField
               label="مرادفات «لكم»"
               hint="عند ورود إحداها → عملية صادر لكم"
               color="blue"
-              value={keywords.them.join('، ')}
+              value={keywords.them}
               onChange={v => updateKwList('them', v)}
             />
             <KwField
               label="مرادفات الليرة التركية"
               hint="تركي، tl، ليرة ..."
               color="orange"
-              value={keywords.try.join('، ')}
+              value={keywords.try}
               onChange={v => updateKwList('try', v)}
             />
             <KwField
               label="مرادفات الدولار"
               hint="دولار، usd، dolar ..."
               color="emerald"
-              value={keywords.usd.join('، ')}
+              value={keywords.usd}
               onChange={v => updateKwList('usd', v)}
             />
             <KwField
               label="كلمات التجاهل"
               hint="أيّ رسالة تحوي إحدى هذه الكلمات تُتجاهَل"
               color="red"
-              value={keywords.ignore.join('، ')}
+              value={keywords.ignore}
               onChange={v => updateKwList('ignore', v)}
             />
             <div>
@@ -763,14 +767,39 @@ function KwField({ label, hint, color = 'gray', value, onChange }) {
     red:     'border-red-200 focus:border-red-400',
     gray:    'border-gray-200 focus:border-gray-400',
   };
+
+  // value هو Array. نحتفظ بمسودّة نصّية محليّة حتى لا تختفي الفاصلة فور كتابتها
+  // (إعادة بناء النص من المصفوفة على كل ضغطة كانت تمنع المستخدم من إضافة كلمات جديدة).
+  const arrToText = (arr) => (Array.isArray(arr) ? arr.join('، ') : (arr || ''));
+  const splitText = (txt) =>
+    String(txt || '').split(/[,،\n]+/).map(s => s.trim()).filter(Boolean);
+
+  const [draft, setDraft] = useState(() => arrToText(value));
+
+  // مزامنة خارجية فقط لو الـ array الوارد لا يطابق ما تكتبه المسودّة الآن
+  // (يحدث عند: تحميل أوّلي، ضغط زرّ "إعادة تحميل"، أو حفظ من مكان آخر).
+  useEffect(() => {
+    const incoming = Array.isArray(value) ? value : [];
+    const parsed = splitText(draft);
+    const same = parsed.length === incoming.length && parsed.every((w, i) => w === incoming[i]);
+    if (!same) setDraft(arrToText(incoming));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  const handleChange = (e) => {
+    const txt = e.target.value;
+    setDraft(txt);                 // اعرض ما يكتبه المستخدم حرفياً
+    onChange(splitText(txt));      // أبلغ الأب بالـ array الناتج
+  };
+
   return (
     <div>
       <label className="block text-xs font-semibold text-gray-700 mb-1">{label}</label>
       {hint && <p className="text-[11px] text-gray-500 mb-1">{hint}</p>}
       <textarea
         rows={2}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={draft}
+        onChange={handleChange}
         className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none ${colors[color] || colors.gray}`}
         dir="auto"
       />

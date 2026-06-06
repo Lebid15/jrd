@@ -29,16 +29,53 @@ export function isAdminName(senderName, token = 'admin') {
   return false;
 }
 
-// يبحث عن أيّ كلمة من القائمة في النصّ المُطبّع (مطابقة كاملة للكلمة)
+// يبني regex من كلمة مفتاحية يسمح بتكرار أيّ حرف داخلها 1+ مرّات
+// مثال: "لنا" → /^ل+ن+ا+$/  (يطابق لنا، لنااا، للللنا، لنــــــــــا)
+// لا تُستخدم للرموز القصيرة جداً (₺، $) — نُبقي مطابقة جزئية لها.
+const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
+function buildElongatedRegex(normWord) {
+  if (!normWord) return null;
+  // اشطر إلى أحرف Unicode حقيقية (تدعم الـ surrogates)
+  const chars = Array.from(normWord);
+  const pattern = chars.map(ch => {
+    if (ch === ' ') return '\\s+';
+    return ch.replace(ESCAPE_RE, '\\$&') + '+';
+  }).join('');
+  try {
+    return new RegExp('^' + pattern + '$', 'u');
+  } catch {
+    return null;
+  }
+}
+
+// يبحث عن أيّ كلمة من القائمة في النصّ المُطبّع
+// - مطابقة كلمة كاملة (سريع) أوّلاً
+// - ثمّ مطابقة مع تمديد أيّ حرف (لنا → لنااا، للللنا)
+// - الرموز القصيرة (≤2) تُطابَق كجزء داخل النصّ كله
 function containsAny(normalizedText, keywords) {
   if (!keywords?.length) return false;
-  const tokens = new Set(normalizedText.split(' '));
+  const tokens = normalizedText.split(' ');
+  const tokenSet = new Set(tokens);
+
   for (const kw of keywords) {
     const k = normalize(kw);
     if (!k) continue;
-    if (tokens.has(k)) return true;
-    // سماح بمطابقة جزء (مثل ₺ أو $) داخل كلمة
-    if (k.length <= 2 && normalizedText.includes(k)) return true;
+
+    // 1) رموز قصيرة (₺، $، tl): مطابقة جزئية في النصّ كله
+    if (k.length <= 2) {
+      if (normalizedText.includes(k)) return true;
+      continue;
+    }
+
+    // 2) مطابقة كلمة كاملة سريعة
+    if (tokenSet.has(k)) return true;
+
+    // 3) مطابقة بتمديد الحروف على كلّ token
+    const re = buildElongatedRegex(k);
+    if (!re) continue;
+    for (const t of tokens) {
+      if (re.test(t)) return true;
+    }
   }
   return false;
 }
