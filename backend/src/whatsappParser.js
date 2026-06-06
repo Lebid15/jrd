@@ -12,21 +12,18 @@ export function normalize(s) {
     .replace(/ى/g, 'ي')
     .replace(/ة/g, 'ه')
     .replace(/[^\p{L}\p{N}\s$₺]/gu, ' ') // إزالة الترقيم (مع الإبقاء على الأحرف والأرقام)
-    .replace(/\s+/g, ' ')
+    // فصل تلقائي بين الحروف والأرقام (لكم1100تركي → لكم 1100 تركي)
+    .replace(/(\p{L})(\p{N})/gu, '$1 $2')
+    .replace(/(\p{N})(\p{L})/gu, '$1 $2')
+    .replace(/\s+/g, ' ')   // أيّ مسافات بيضاء (مسافات/أسطر/تابات) → مسافة واحدة
     .trim();
 }
 
-// هل اسم المرسل يحوي أحرف الـ admin بالترتيب؟ (subsequence)
+// هل اسم المرسل يحوي كلمة الـ admin؟ (substring، غير حسّاس لحالة الأحرف)
+// مثال: "Admin Worker" أو "ahmed-admin" → true ، "Adam Idris Nadir" → false
 export function isAdminName(senderName, token = 'admin') {
-  if (!senderName) return false;
-  const n = senderName.toLowerCase();
-  const t = token.toLowerCase();
-  let i = 0;
-  for (const ch of n) {
-    if (ch === t[i]) i++;
-    if (i === t.length) return true;
-  }
-  return false;
+  if (!senderName || !token) return false;
+  return String(senderName).toLowerCase().includes(String(token).toLowerCase());
 }
 
 // يبني regex من كلمة مفتاحية يسمح بتكرار أيّ حرف داخلها 1+ مرّات
