@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -22,6 +22,10 @@ export default function Bank() {
   const [smsTestResult, setSmsTestResult] = useState(null);
   const [smsTestBusy, setSmsTestBusy] = useState(false);
   const [diagBusy, setDiagBusy] = useState(false);
+
+  // ─── حالة Google Messages scraper ─────
+  const [gmsgStatus, setGmsgStatus] = useState(null);
+  const [gmsgBusy, setGmsgBusy] = useState(false);
 
   // ─── تحميل البيانات ─────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -64,6 +68,35 @@ export default function Bank() {
   useEffect(() => {
     if (diagOpen) loadDiagnostics();
   }, [diagOpen, loadDiagnostics]);
+
+  // ─── Google Messages scraper status ─────────────────────────────────────
+  const loadGmsgStatus = useCallback(async () => {
+    try {
+      const r = await api.get('/internal/bank-message/status');
+      setGmsgStatus(r.data);
+    } catch {
+      setGmsgStatus({ reachable: false, error: 'load_failed' });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadGmsgStatus();
+    const id = setInterval(loadGmsgStatus, 15000);
+    return () => clearInterval(id);
+  }, [loadGmsgStatus]);
+
+  const startGmsg = async () => {
+    setGmsgBusy(true);
+    try {
+      await api.post('/internal/bank-message/start');
+      toast.success('تم إرسال أمر التشغيل');
+      setTimeout(loadGmsgStatus, 2000);
+    } catch (e) {
+      toast.error('فشل: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setGmsgBusy(false);
+    }
+  };
 
   const runSmsTest = async () => {
     const text = smsTestText.trim();
@@ -149,6 +182,14 @@ export default function Bank() {
   return (
     <div className="max-w-3xl mx-auto" dir="rtl">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">🏦 كويت ترك</h1>
+
+      {/* ─── بطاقة مصدر رسائل البنك (Google Messages Web) ─── */}
+      <GmsgSourceCard
+        status={gmsgStatus}
+        busy={gmsgBusy}
+        onStart={startGmsg}
+        onReload={loadGmsgStatus}
+      />
 
       {/* ─── لوحة تشخيص webhook ─── */}
       <DiagnosticsPanel
@@ -466,6 +507,130 @@ function DiagnosticsPanel({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── بطاقة مصدر رسائل البنك (Google Messages Web scraper) ─────────────────
+const GMSG_STATE_LABELS = {
+  idle:            { label: 'جاهز — اضغط بدء',           color: 'bg-gray-100 text-gray-700 border-gray-200',     icon: WifiOff },
+  starting:        { label: 'يبدأ التشغيل ...',           color: 'bg-blue-50 text-blue-700 border-blue-200',      icon: RefreshCw },
+  pairing:         { label: 'بحاجة إقران (امسح QR محلياً)', color: 'bg-orange-50 text-orange-700 border-orange-200', icon: AlertTriangle },
+  opening_chat:    { label: 'يفتح محادثة KUVEYT TURK ...', color: 'bg-blue-50 text-blue-700 border-blue-200',      icon: RefreshCw },
+  running:         { label: 'يعمل — يستطلع كل بضع ثوانٍ', color: 'bg-green-50 text-green-700 border-green-200',   icon: CheckCircle2 },
+  session_expired: { label: 'انتهت الجلسة — أعد الإقران',  color: 'bg-orange-50 text-orange-700 border-orange-200', icon: AlertTriangle },
+  error:           { label: 'خطأ',                        color: 'bg-red-50 text-red-700 border-red-200',         icon: AlertTriangle },
+  stopped:         { label: 'متوقّف',                      color: 'bg-gray-100 text-gray-700 border-gray-200',     icon: WifiOff },
+};
+
+function minutesAgo(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  return Math.round(ms / 60000);
+}
+
+function GmsgSourceCard({ status, busy, onStart, onReload }) {
+  const reachable = !!status?.reachable;
+  const state = reachable ? (status?.state || 'idle') : 'offline';
+  const cfg = GMSG_STATE_LABELS[state] || { label: state, color: 'bg-gray-100 text-gray-600 border-gray-200', icon: WifiOff };
+  const Icon = cfg.icon;
+
+  const lastMsgMin = minutesAgo(status?.last_message_at);
+  const lastSeenMin = minutesAgo(status?.last_seen_at);
+  const canStart = reachable && ['idle', 'stopped', 'error'].includes(state);
+
+  return (
+    <div className="bg-white rounded-2xl shadow border border-gray-100 mb-6 p-4" dir="rtl">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="text-blue-600" size={20} />
+          <h3 className="font-bold text-gray-700">مصدر الرسائل: Google Messages Web</h3>
+        </div>
+        <button
+          onClick={onReload}
+          className="text-gray-400 hover:text-gray-600"
+          title="تحديث الحالة"
+        >
+          <RefreshCw size={16} />
+        </button>
+      </div>
+
+      {/* شريط الحالة */}
+      <div className={`flex items-center gap-2 px-3 py-2 rounded border ${cfg.color} text-sm mb-3`}>
+        {reachable
+          ? <Icon size={16} className={state === 'starting' || state === 'opening_chat' ? 'animate-spin' : ''} />
+          : <WifiOff size={16} />
+        }
+        <span className="font-bold">
+          {reachable ? cfg.label : 'الخدمة غير متاحة'}
+        </span>
+        {!reachable && status?.error && (
+          <span className="text-xs opacity-70 mr-auto">({status.error})</span>
+        )}
+      </div>
+
+      {/* تفاصيل */}
+      {reachable && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-gray-600 mb-3">
+          <div className="bg-gray-50 rounded p-2">
+            <p className="text-gray-400 mb-0.5">جهة الاتصال</p>
+            <p className="font-bold text-gray-800">{status.target_contact || '—'}</p>
+          </div>
+          <div className="bg-gray-50 rounded p-2">
+            <p className="text-gray-400 mb-0.5">رسائل معالَجة</p>
+            <p className="font-bold text-gray-800">{status.messages_processed_total ?? 0}</p>
+          </div>
+          <div className="bg-gray-50 rounded p-2">
+            <p className="text-gray-400 mb-0.5">آخر استطلاع</p>
+            <p className="font-bold text-gray-800">
+              {lastSeenMin === null ? '—' : lastSeenMin === 0 ? 'الآن' : `قبل ${lastSeenMin} د`}
+            </p>
+          </div>
+          <div className="bg-gray-50 rounded p-2">
+            <p className="text-gray-400 mb-0.5">آخر رسالة جديدة</p>
+            <p className="font-bold text-gray-800">
+              {lastMsgMin === null ? '—' : lastMsgMin === 0 ? 'الآن' : `قبل ${lastMsgMin} د`}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* تنبيهات */}
+      {reachable && state === 'session_expired' && (
+        <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-xs text-orange-800 mb-3">
+          <AlertTriangle size={14} className="inline ml-1" />
+          جلسة Google Messages انتهت. أعِد الإقران محلياً:
+          <ol className="list-decimal list-inside mt-1 mr-3 space-y-0.5">
+            <li>على جهازك: <code className="bg-orange-100 px-1 rounded" dir="ltr">cd messages-scraper</code></li>
+            <li>احذف مجلد <code className="bg-orange-100 px-1 rounded">browser-data/</code></li>
+            <li>شغّل <code className="bg-orange-100 px-1 rounded" dir="ltr">HEADLESS=false npm run spike</code> وامسح QR</li>
+            <li>ارفع المجلد إلى Volume على Railway (مسار <code className="bg-orange-100 px-1 rounded" dir="ltr">/data/gmsg-browser-data</code>)</li>
+          </ol>
+        </div>
+      )}
+
+      {reachable && state === 'error' && status?.last_error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800 mb-3">
+          <AlertTriangle size={14} className="inline ml-1" />
+          {status.last_error}
+        </div>
+      )}
+
+      {/* أزرار */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onStart}
+          disabled={busy || !canStart}
+          className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-40"
+        >
+          {busy ? <RefreshCw size={14} className="inline animate-spin ml-1" /> : <Play size={14} className="inline ml-1" />}
+          بدء / إعادة تشغيل
+        </button>
+        <p className="text-xs text-gray-400 mr-auto">
+          الخدمة تعمل على port 3101 وتُغذّي الـ backend مباشرة.
+        </p>
+      </div>
     </div>
   );
 }

@@ -176,6 +176,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_bank_sms_log_created ON bank_sms_log(created_at DESC);
 `);
 
+// ─── Migration: source + external_id on bank_transactions ───────────────────
+// source = 'sms' (افتراضي — SMS Forwarder) أو 'gmsg' (Google Messages Web scraper)
+// external_id = بصمة فريدة من المصدر لمنع التكرار (يُستخدم من gmsg scraper)
+const btxCols = db.prepare("PRAGMA table_info(bank_transactions)").all().map(c => c.name);
+if (!btxCols.includes('source')) {
+  db.exec(`ALTER TABLE bank_transactions ADD COLUMN source TEXT DEFAULT 'sms'`);
+}
+if (!btxCols.includes('external_id')) {
+  db.exec(`ALTER TABLE bank_transactions ADD COLUMN external_id TEXT`);
+}
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_tx_external_id
+    ON bank_transactions(external_id)
+    WHERE external_id IS NOT NULL
+`);
+
 // ─── Default settings ────────────────────────────────────────────────────────
 const seedSetting = (key, val) => {
   const exists = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key);

@@ -42,6 +42,10 @@ RUN cd scraper && npm install --omit=dev && npm cache clean --force
 COPY bot/package*.json ./bot/
 RUN cd bot && npm install --omit=dev && npm cache clean --force
 
+# Install messages-scraper deps (Google Messages Web — البند 3.5)
+COPY messages-scraper/package*.json ./messages-scraper/
+RUN cd messages-scraper && npm install --omit=dev && npm cache clean --force
+
 # Ensure Chromium browser is present at PLAYWRIGHT_BROWSERS_PATH (in case
 # the scraper's playwright version differs from the base image's bundled one).
 RUN cd scraper && npx playwright install chromium
@@ -50,13 +54,14 @@ RUN cd scraper && npx playwright install chromium
 COPY backend/ ./backend/
 COPY scraper/ ./scraper/
 COPY bot/ ./bot/
+COPY messages-scraper/ ./messages-scraper/
 COPY start.sh ./start.sh
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 RUN chmod +x /app/start.sh
 
 # Persistent data dir (mounted as a Volume in Railway)
-RUN mkdir -p /data/uploads /data/browser-data /data/auth_sessions
+RUN mkdir -p /data/uploads /data/browser-data /data/auth_sessions /data/gmsg-browser-data
 
 # Note: we run as root because Railway-mounted volumes are root-owned.
 # Chromium is launched with --no-sandbox (see scraper/src/fetch.js).
@@ -64,5 +69,6 @@ RUN mkdir -p /data/uploads /data/browser-data /data/auth_sessions
 
 EXPOSE 3001
 EXPOSE 3100
+EXPOSE 3101
 
 CMD ["/bin/sh", "/app/start.sh"]

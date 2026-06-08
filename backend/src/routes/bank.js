@@ -8,7 +8,7 @@ const router = Router();
 /**
  * تحويل الأرقام التركية "1.000,00" → 1000.00
  */
-function parseTurkishNumber(str) {
+export function parseTurkishNumber(str) {
   return parseFloat(str.replace(/\./g, '').replace(',', '.'));
 }
 
@@ -16,8 +16,11 @@ function parseTurkishNumber(str) {
  * تحليل نص SMS من كويت ترك
  * يرجع: { direction: 'in'|'out', amount, senderReceiver, description, transactionTime }
  * أو null إذا لم يُعرَف النمط
+ *
+ * يُستخدَم من webhook الـ SMS ومن messages-scraper (Google Messages) معاً —
+ * نفس parser للمصدرَين، لأن نصّ الرسالة هو نفسه.
  */
-function parseSms(body) {
+export function parseSms(body) {
   const isIncoming = /hesab[ıi]n[ıi]za.*para geldi/i.test(body);
   const isOutgoing = /hesab[ıi]n[ıi]zdan.*para g[oö]nderildi/i.test(body);
 

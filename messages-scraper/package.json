@@ -1,0 +1,17 @@
+{
+  "name": "jrd-messages-scraper",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Google Messages Web scraper — يقرأ رسائل KUVEYT TURK ويُرسلها إلى backend (البند 3.5 من plan.md).",
+  "scripts": {
+    "start": "node src/index.js",
+    "spike": "node src/spike.js",
+    "install:browser": "playwright install chromium"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "playwright": "^1.47.0"
+  }
+}

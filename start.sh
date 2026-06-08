@@ -25,6 +25,10 @@ echo "Starting bot (BACKEND_URL=${BACKEND_URL})..."
 node bot/src/index.js &
 BOT_PID=$!
 
-echo "Both services started (backend=$BACKEND_PID, bot=$BOT_PID)"
+echo "Starting messages-scraper (Google Messages Web → KUVEYT TURK)..."
+node messages-scraper/src/index.js &
+GMSG_PID=$!
 
-wait $BACKEND_PID $BOT_PID
+echo "All services started (backend=$BACKEND_PID, bot=$BOT_PID, gmsg=$GMSG_PID)"
+
+wait $BACKEND_PID $BOT_PID $GMSG_PID

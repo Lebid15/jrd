@@ -2,6 +2,7 @@ import { Router } from 'express';
 import crypto from 'crypto';
 import db from '../database.js';
 import { parseMessage, computeDelta, isAdminName } from '../whatsappParser.js';
+import { parseSms } from './bank.js';
 
 const router = Router();
 
@@ -542,6 +543,171 @@ router.get('/whatsapp/transactions', (req, res) => {
     `).all(limit);
   }
   res.json(rows);
+});
+
+// ─── Bank message ingest (Google Messages Web scraper) ──────────────────────
+/**
+ * POST /api/internal/bank-message/ingest
+ * يُستدعى من خدمة messages-scraper (port 3101) لكل رسالة جديدة من KUVEYT TURK.
+ *
+ * Body: {
+ *   source: 'gmsg',
+ *   contact_name: 'KUVEYT TURK',
+ *   text: '<full message text>',
+ *   occurred_at: '...'           // اختياري
+ *   external_id: '<hash 24 hex>' // ضروري لمنع التكرار
+ * }
+ *
+ * يُعيد استخدام نفس parseSms من routes/bank.js (= صفر مخاطرة على المنطق الحالي).
+ * يُخزّن في bank_transactions مع source='gmsg' و external_id (UNIQUE).
+ */
+router.post('/bank-message/ingest', internalAuth, (req, res) => {
+  const { source, text, external_id, occurred_at, contact_name } = req.body || {};
+
+  if (!text || typeof text !== 'string') {
+    return res.status(400).json({ error: 'text required' });
+  }
+  if (!external_id) {
+    return res.status(400).json({ error: 'external_id required' });
+  }
+  const effSource = source === 'gmsg' ? 'gmsg' : 'gmsg'; // حالياً نقبل gmsg فقط من هذا الـ endpoint
+
+  // dedup: لو سبق ودخلت هذه الرسالة بنفس external_id، نُرجع duplicate دون تعديل أي شيء
+  const existing = db.prepare(
+    'SELECT id FROM bank_transactions WHERE external_id = ?'
+  ).get(external_id);
+  if (existing) {
+    return res.json({ ok: true, duplicate: true, transaction_id: existing.id });
+  }
+
+  // parse — نفس parser SMS الحالي
+  const parsed = parseSms(text);
+  if (!parsed) {
+    // نسجّل المحاولة في bank_sms_log كي تظهر في لوحة التشخيص
+    db.prepare(`
+      INSERT INTO bank_sms_log
+        (ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
+      VALUES (?, 1, 'no_pattern', ?, ?, ?, NULL, '', NULL, NULL)
+    `).run('gmsg-scraper', 'gmsg: pattern not matched', contact_name || '', text);
+    return res.status(422).json({ ok: false, error: 'no_pattern' });
+  }
+
+  // اعثر على أوّل بند bank مُفعَّل (نفس منطق webhook الحالي)
+  const bankItem = db.prepare(`
+    SELECT i.id, cv.try_amount
+    FROM items i LEFT JOIN current_values cv ON cv.item_id = i.id
+    WHERE i.type = 'bank' AND i.is_active = 1
+    ORDER BY i.sort_order ASC LIMIT 1
+  `).get();
+  if (!bankItem) {
+    db.prepare(`
+      INSERT INTO bank_sms_log
+        (ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
+      VALUES (?, 1, 'no_bank_item', 'No active bank item', ?, ?, NULL, ?, ?, NULL)
+    `).run('gmsg-scraper', contact_name || '', text, parsed.direction, parsed.amount);
+    return res.status(404).json({ ok: false, error: 'no_bank_item' });
+  }
+
+  const currentBalance = bankItem.try_amount || 0;
+  const newBalance = parsed.direction === 'in'
+    ? currentBalance + parsed.amount
+    : currentBalance - parsed.amount;
+
+  // atomic: update balance + insert tx (مع external_id) + log
+  let txId;
+  try {
+    txId = db.transaction(() => {
+      db.prepare('UPDATE current_values SET try_amount = ? WHERE item_id = ?')
+        .run(newBalance, bankItem.id);
+
+      const ins = db.prepare(`
+        INSERT INTO bank_transactions
+          (item_id, direction, amount, sender_receiver, description, transaction_time,
+           raw_sms, balance_after, source, external_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        bankItem.id,
+        parsed.direction,
+        parsed.amount,
+        parsed.senderReceiver,
+        parsed.description,
+        parsed.transactionTime || occurred_at || '',
+        text,
+        newBalance,
+        'gmsg',
+        external_id,
+      );
+      const newId = ins.lastInsertRowid;
+
+      db.prepare(`
+        INSERT INTO bank_sms_log
+          (ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
+        VALUES (?, 1, 'applied', '', ?, ?, ?, ?, ?, ?)
+      `).run('gmsg-scraper', contact_name || '', text, bankItem.id, parsed.direction, parsed.amount, newId);
+
+      return newId;
+    })();
+  } catch (e) {
+    // SQLITE_CONSTRAINT_UNIQUE → سباق مع طلب آخر بنفس external_id
+    if (String(e.message).includes('UNIQUE')) {
+      const existing2 = db.prepare(
+        'SELECT id FROM bank_transactions WHERE external_id = ?'
+      ).get(external_id);
+      return res.json({ ok: true, duplicate: true, transaction_id: existing2?.id });
+    }
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+
+  res.json({
+    ok: true,
+    applied: true,
+    transaction_id: txId,
+    direction: parsed.direction,
+    amount: parsed.amount,
+    balance_before: currentBalance,
+    balance_after: newBalance,
+    source: effSource,
+  });
+});
+
+// ─── Bank source status (proxy إلى messages-scraper) ────────────────────────
+/**
+ * GET /api/internal/bank-message/status
+ * الواجهة تستعلم عن حالة messages-scraper (port 3101).
+ *  - reachable=false → الخدمة غير متاحة
+ */
+router.get('/bank-message/status', async (req, res) => {
+  const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
+  const key = process.env.INTERNAL_API_KEY || '';
+  try {
+    const r = await fetch(`${url}/status`, {
+      headers: { 'X-Internal-Api-Key': key },
+    });
+    if (!r.ok) return res.json({ reachable: false, error: `http_${r.status}` });
+    const data = await r.json();
+    res.json({ reachable: true, ...data });
+  } catch (e) {
+    res.json({ reachable: false, error: e.code || 'unreachable' });
+  }
+});
+
+/**
+ * POST /api/internal/bank-message/start
+ * أمر بدء/استئناف خدمة messages-scraper
+ */
+router.post('/bank-message/start', async (req, res) => {
+  const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
+  const key = process.env.INTERNAL_API_KEY || '';
+  try {
+    const r = await fetch(`${url}/start`, {
+      method: 'POST',
+      headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
+    });
+    const data = await r.json().catch(() => ({}));
+    res.status(r.status).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.code || e.message });
+  }
 });
 
 export default router;
