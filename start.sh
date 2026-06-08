@@ -21,14 +21,34 @@ for i in $(seq 1 30); do
   sleep 1
 done
 
-echo "Starting bot (BACKEND_URL=${BACKEND_URL})..."
-node bot/src/index.js &
-BOT_PID=$!
+# --- Supervised loops للخدمات الثانوية ---
+# لو ماتت الخدمة لأيّ سبب، نُعيد تشغيلها بعد 5 ثوانٍ. هذا يمنع
+# الحالة التي شوهدت سابقاً: bot يموت بصمت → frontend يُظهر "bot_unreachable".
+supervise() {
+  name="$1"
+  shift
+  # نُعطّل set -e داخل الـ loop حتى نتمكّن من التقاط exit code وإعادة المحاولة
+  set +e
+  while true; do
+    echo "[supervise:$name] starting: $*"
+    "$@"
+    rc=$?
+    echo "[supervise:$name] exited with code $rc — restarting in 5s"
+    sleep 5
+  done
+}
 
-echo "Starting messages-scraper (Google Messages Web → KUVEYT TURK)..."
-node messages-scraper/src/index.js &
-GMSG_PID=$!
+supervise bot  node bot/src/index.js &
+BOT_SUP_PID=$!
 
-echo "All services started (backend=$BACKEND_PID, bot=$BOT_PID, gmsg=$GMSG_PID)"
+supervise gmsg node messages-scraper/src/index.js &
+GMSG_SUP_PID=$!
 
-wait $BACKEND_PID $BOT_PID $GMSG_PID
+echo "All services started (backend=$BACKEND_PID, bot-sup=$BOT_SUP_PID, gmsg-sup=$GMSG_SUP_PID)"
+
+# نُبقي backend في المقدّمة: لو سقط، تموت الحاوية ويُعيد Railway تشغيلها.
+wait $BACKEND_PID
+backend_rc=$?
+echo "Backend exited with code $backend_rc — shutting down supervisors"
+kill $BOT_SUP_PID $GMSG_SUP_PID 2>/dev/null || true
+exit $backend_rc
