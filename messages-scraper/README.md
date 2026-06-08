@@ -1,42 +1,72 @@
-# messages-scraper — المرحلة 1 (Spike محلّي)
+# messages-scraper — Google Messages Web → KUVEYT TURK
 
-> الغاية الوحيدة من هذا المجلد حالياً: التأكّد عملياً من أن selectors **Google Messages Web** ثابتة بدرجة كافية، قبل بناء الخدمة الكاملة (راجع `plan.md` → البند 3.5).
+> خدمة تقرأ آخر رسائل البنك من محادثة `KUVEYT TURK` على `messages.google.com/web`
+> وتُرسلها لـ backend (راجع `plan.md` → البند 3.5).
 
-## ما يفعله `spike.js`
-1. يفتح Chromium بـ **Persistent Context** (يحفظ الجلسة في `browser-data/`).
-2. يذهب إلى <https://messages.google.com/web>.
-3. عند أوّل تشغيل: يطبع رسالة في الـ console ويتركك تمسح QR من جوالك (Messages → Device pairing). بعد الاقتران لا تحتاج تكراره.
-4. ينتظر تحميل قائمة المحادثات.
-5. يبحث عن محادثة عنوانها يبدأ/يحتوي على `KUVEYT TURK` (قابل للتغيير عبر `TARGET_CONTACT` في `.env`).
-6. يفتح المحادثة، يطبع آخر رسالة (نص + وقت) في الـ console، ثم يخرج.
+## كيف يعمل
+1. Chromium يعمل بـ Persistent Context على مجلد `browser-data/` (محلياً) أو `/data/gmsg-browser-data` (Railway).
+2. يفتح محادثة KUVEYT TURK تلقائياً عند الإقلاع.
+3. كل ~12 ثانية يقرأ آخر 20 رسالة، يحذف المكرّر، ويُرسل الجديد لـ backend عبر `POST /api/internal/bank-message/ingest`.
+4. backend يعيد استخدام نفس `parseSms` الموجود لـ SMS Forwarder (= صفر مخاطرة على المنطق المالي).
 
-> الـ spike **لا يخزّن شيئاً**، **لا يستدعي backend**، **لا ينشّط polling**. هذا متعمَّد — هدفنا أوّلاً معرفة selectors فقط.
+---
 
-## تشغيل محلّي
+## دورة حياة الجلسة
 
+| الحالة | المعنى | الإجراء |
+|---|---|---|
+| `running` | يعمل ويستطلع | لا شيء |
+| `pairing` | بحاجة QR | تجديد الجلسة (انظر أدناه) |
+| `session_expired` | الجلسة انتهت (نادر، كل عدّة شهور) | تجديد الجلسة |
+| `error` | خطأ تقني | راجع الـ logs على Railway |
+
+---
+
+## 🔄 تجديد الجلسة (الإقران + الرفع)
+
+> اتبع هذه الخطوات **محلياً على جهازك** ثم ارفع الناتج من واجهة ahlacard.net.
+> الجلسة الواحدة تدوم عادةً عدّة شهور.
+
+### 1) ضع نفسك في مجلد المشروع
 ```powershell
 cd messages-scraper
-npm install
-npm run install:browser   # تحميل Chromium لـ Playwright (مرّة واحدة)
-copy .env.example .env    # ثم عدّل القيم لو احتجت
+```
+
+### 2) احذف الجلسة القديمة وافتح Chromium لمسح QR
+```powershell
+Remove-Item -Recurse -Force browser-data -ErrorAction SilentlyContinue
 npm run spike
 ```
 
-في أوّل تشغيل: ستفتح نافذة Chromium، اذهب لجوالك → تطبيق **Messages** → Device pairing → امسح QR. بعدها سيكمل الـ spike تلقائياً.
+سيفتح متصفّح Chromium. داخله:
+1. سجّل دخول إلى حسابك على Google (لو لم يكن مسجَّلاً).
+2. اذهب إلى تطبيق **Messages** على جوالك → اضغط صورتك → **Device pairing** → **New device** → امسح الـ QR الظاهر.
+3. انتظر حتى يطبع الـ console آخر رسالة من `KUVEYT TURK`.
+4. اضغط `Ctrl+C` في الـ terminal لإغلاق المتصفّح.
 
-التشغيلات اللاحقة تستأنف الجلسة من `browser-data/` بدون QR.
+### 3) اضغط مجلد الجلسة إلى ZIP
+```powershell
+.\scripts\pack-session.ps1
+```
 
-## ماذا نلتقطه من هذه التجربة (Logs)
-عندما يعمل بنجاح سنوثّق في `memories/repo/`:
-- selector عنصر المحادثة في القائمة الجانبية (`mws-conversation-list-item`?).
-- selector لاسم جهة الاتصال داخله.
-- selector لآخر فقاعة رسالة وارد (`mws-message-wrapper.incoming`?).
-- selector لنصّ الرسالة (`mws-text-message-part`?).
-- selector للوقت/الـ timestamp.
+سيُنشئ ملف `session.zip` في المجلد الحالي.
 
-عندها فقط ننتقل للمرحلة 2 (Polling + ingest عبر `/api/internal/bank-message/ingest`).
+### 4) ارفع الملف من واجهة ahlacard.net
+1. افتح <https://ahlacard.net/bank>.
+2. في بطاقة **"مصدر الرسائل: Google Messages Web"** أعلى الصفحة، اضغط زر **"رفع / تجديد الجلسة"**.
+3. اختر `session.zip`.
+4. السيرفر سيستبدل الجلسة ويُعيد التشغيل تلقائياً. خلال ~30 ثانية تتحوّل الحالة لـ **"يعمل"** ويبدأ التقاط الرسائل.
 
-## تنبيهات
-- **لا تحذف** `browser-data/` بعد الاقتران (ستضطر لإعادة المسح).
-- لا تشارك محتوى `browser-data/` (يحوي جلسة Google).
-- `.env` و `browser-data/` مُهمَلان في `.gitignore`.
+> ✅ بعد ذلك يمكنك حذف `session.zip` و `browser-data/` من جهازك (الجلسة الآن على السيرفر).
+
+---
+
+## تشغيل محلّي (للتطوير فقط)
+```powershell
+cd messages-scraper
+npm install
+npm run install:browser
+copy .env.example .env
+npm start          # خدمة كاملة على port 3101
+```
+

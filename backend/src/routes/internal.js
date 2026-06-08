@@ -1,5 +1,10 @@
 import { Router } from 'express';
 import crypto from 'crypto';
+import multer from 'multer';
+import AdmZip from 'adm-zip';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import db from '../database.js';
 import { parseMessage, computeDelta, isAdminName } from '../whatsappParser.js';
 import { parseSms } from './bank.js';
@@ -708,6 +713,116 @@ router.post('/bank-message/start', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.code || e.message });
   }
+});
+
+// ─── Session upload (لتجديد جلسة Google Messages على السيرفر) ───────────────
+/**
+ * POST /api/internal/bank-message/upload-session
+ * multipart/form-data: field name "session" = ملف ZIP لـ browser-data/
+ *
+ * فك الـ zip في GMSG_BROWSER_DATA (افتراضياً /data/gmsg-browser-data)،
+ * ثم يُرسِل أمر restart لخدمة messages-scraper كي تستأنف بالجلسة الجديدة.
+ */
+const sessionUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, os.tmpdir()),
+    filename: (req, file, cb) => cb(null, `gmsg-session-${Date.now()}.zip`),
+  }),
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB سقف آمن
+  fileFilter: (req, file, cb) => {
+    if (/\.zip$/i.test(file.originalname)) cb(null, true);
+    else cb(new Error('يجب أن يكون الملف بصيغة .zip'));
+  },
+});
+
+router.post('/bank-message/upload-session', sessionUpload.single('session'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'ملف ZIP مطلوب (field name=session)' });
+
+  const dest = process.env.GMSG_BROWSER_DATA
+    || path.resolve(process.cwd(), '..', 'messages-scraper', 'browser-data');
+
+  let entriesCount = 0;
+  let restartResult = null;
+  try {
+    // 1) أوقِف الـ scraper أوّلاً (يُغلق Chromium ويُحرّر ملفات browser-data)
+    const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
+    const key = process.env.INTERNAL_API_KEY || '';
+    try {
+      await fetch(`${url}/stop`, {
+        method: 'POST',
+        headers: { 'X-Internal-Api-Key': key },
+      });
+    } catch (_) { /* الـ scraper قد يكون متوقّفاً أصلاً */ }
+
+    // انتظار قصير حتى يُحرّر Chromium الملفات على Windows
+    await new Promise(r => setTimeout(r, 1500));
+
+    // 2) فرّغ المجلد القديم (احتفظ بالمجلد نفسه)
+    if (fs.existsSync(dest)) {
+      for (const entry of fs.readdirSync(dest)) {
+        try {
+          fs.rmSync(path.join(dest, entry), { recursive: true, force: true });
+        } catch (_) { /* تجاهل قفل ملف عابر */ }
+      }
+    } else {
+      fs.mkdirSync(dest, { recursive: true });
+    }
+
+    // 3) فكّ ZIP
+    const zip = new AdmZip(req.file.path);
+    const entries = zip.getEntries();
+    entriesCount = entries.length;
+    if (entriesCount === 0) {
+      return res.status(400).json({ error: 'الـ ZIP فارغ' });
+    }
+    // فحص بسيط لمنع zip-slip
+    for (const e of entries) {
+      const full = path.resolve(dest, e.entryName);
+      if (!full.startsWith(path.resolve(dest))) {
+        return res.status(400).json({ error: 'ملف خارج المسار في الـ ZIP' });
+      }
+    }
+    zip.extractAllTo(dest, true);
+
+    // 4) سجّل وقت آخر تحديث للجلسة (يظهر في الواجهة)
+    db.prepare(`
+      INSERT INTO settings (key, value) VALUES ('gmsg_session_uploaded_at', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(new Date().toISOString());
+
+    // 5) أعد تشغيل الـ scraper
+    try {
+      const r = await fetch(`${url}/start`, {
+        method: 'POST',
+        headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
+      });
+      restartResult = { status: r.status, body: await r.json().catch(() => ({})) };
+    } catch (e) {
+      restartResult = { error: e.code || e.message };
+    }
+
+    res.json({
+      ok: true,
+      extracted_entries: entriesCount,
+      dest,
+      restart: restartResult,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message, where: 'unzip_or_restart' });
+  } finally {
+    try { fs.unlinkSync(req.file.path); } catch (_) {}
+  }
+});
+
+/**
+ * GET /api/internal/bank-message/session-info
+ * متى آخر مرّة رُفعت جلسة Google Messages.
+ */
+router.get('/bank-message/session-info', (req, res) => {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'gmsg_session_uploaded_at'").get();
+  res.json({
+    uploaded_at: row?.value || null,
+  });
 });
 
 export default router;

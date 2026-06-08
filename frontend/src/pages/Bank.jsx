@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff, Upload } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -26,6 +26,9 @@ export default function Bank() {
   // ─── حالة Google Messages scraper ─────
   const [gmsgStatus, setGmsgStatus] = useState(null);
   const [gmsgBusy, setGmsgBusy] = useState(false);
+  const [gmsgSessionInfo, setGmsgSessionInfo] = useState(null);
+  const [gmsgUploadBusy, setGmsgUploadBusy] = useState(false);
+  const [gmsgUploadProgress, setGmsgUploadProgress] = useState(0);
 
   // ─── تحميل البيانات ─────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
@@ -186,9 +189,13 @@ export default function Bank() {
       {/* ─── بطاقة مصدر رسائل البنك (Google Messages Web) ─── */}
       <GmsgSourceCard
         status={gmsgStatus}
+        sessionInfo={gmsgSessionInfo}
         busy={gmsgBusy}
         onStart={startGmsg}
         onReload={loadGmsgStatus}
+        onUploadSession={uploadGmsgSession}
+        uploadBusy={gmsgUploadBusy}
+        uploadProgress={gmsgUploadProgress}
       />
 
       {/* ─── لوحة تشخيص webhook ─── */}
@@ -530,7 +537,7 @@ function minutesAgo(iso) {
   return Math.round(ms / 60000);
 }
 
-function GmsgSourceCard({ status, busy, onStart, onReload }) {
+function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUploadSession, uploadBusy, uploadProgress }) {
   const reachable = !!status?.reachable;
   const state = reachable ? (status?.state || 'idle') : 'offline';
   const cfg = GMSG_STATE_LABELS[state] || { label: state, color: 'bg-gray-100 text-gray-600 border-gray-200', icon: WifiOff };
@@ -538,7 +545,17 @@ function GmsgSourceCard({ status, busy, onStart, onReload }) {
 
   const lastMsgMin = minutesAgo(status?.last_message_at);
   const lastSeenMin = minutesAgo(status?.last_seen_at);
+  const sessionDaysAgo = sessionInfo?.uploaded_at
+    ? Math.floor((Date.now() - new Date(sessionInfo.uploaded_at).getTime()) / (24 * 3600 * 1000))
+    : null;
   const canStart = reachable && ['idle', 'stopped', 'error'].includes(state);
+  const fileInputRef = useRef(null);
+
+  const onPickFile = (e) => {
+    const f = e.target.files?.[0];
+    if (f) onUploadSession(f);
+    e.target.value = ''; // اسمح بإعادة اختيار نفس الملف
+  };
 
   return (
     <div className="bg-white rounded-2xl shadow border border-gray-100 mb-6 p-4" dir="rtl">
@@ -596,17 +613,27 @@ function GmsgSourceCard({ status, busy, onStart, onReload }) {
         </div>
       )}
 
+      {/* معلومة الجلسة المرفوعة */}
+      {sessionInfo?.uploaded_at ? (
+        <div className="text-xs text-gray-500 mb-3 flex items-center gap-2">
+          <CheckCircle2 size={14} className="text-green-500" />
+          آخر تجديد للجلسة: <strong className="text-gray-700">
+            {sessionDaysAgo === 0 ? 'اليوم' : `قبل ${sessionDaysAgo} يوم`}
+          </strong>
+          <span className="text-gray-400">({new Date(sessionInfo.uploaded_at).toLocaleString('ar-EG')})</span>
+        </div>
+      ) : (
+        <div className="text-xs text-orange-700 mb-3 bg-orange-50 border border-orange-200 rounded p-2">
+          <AlertTriangle size={14} className="inline ml-1" />
+          لم تُرفع جلسة Google Messages بعد على السيرفر. اتّبع الخطوات أدناه.
+        </div>
+      )}
+
       {/* تنبيهات */}
       {reachable && state === 'session_expired' && (
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-xs text-orange-800 mb-3">
           <AlertTriangle size={14} className="inline ml-1" />
-          جلسة Google Messages انتهت. أعِد الإقران محلياً:
-          <ol className="list-decimal list-inside mt-1 mr-3 space-y-0.5">
-            <li>على جهازك: <code className="bg-orange-100 px-1 rounded" dir="ltr">cd messages-scraper</code></li>
-            <li>احذف مجلد <code className="bg-orange-100 px-1 rounded">browser-data/</code></li>
-            <li>شغّل <code className="bg-orange-100 px-1 rounded" dir="ltr">HEADLESS=false npm run spike</code> وامسح QR</li>
-            <li>ارفع المجلد إلى Volume على Railway (مسار <code className="bg-orange-100 px-1 rounded" dir="ltr">/data/gmsg-browser-data</code>)</li>
-          </ol>
+          جلسة Google Messages انتهت. أعِد التجديد بالخطوات في الأسفل.
         </div>
       )}
 
@@ -618,7 +645,7 @@ function GmsgSourceCard({ status, busy, onStart, onReload }) {
       )}
 
       {/* أزرار */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 mb-3">
         <button
           onClick={onStart}
           disabled={busy || !canStart}
@@ -627,10 +654,56 @@ function GmsgSourceCard({ status, busy, onStart, onReload }) {
           {busy ? <RefreshCw size={14} className="inline animate-spin ml-1" /> : <Play size={14} className="inline ml-1" />}
           بدء / إعادة تشغيل
         </button>
-        <p className="text-xs text-gray-400 mr-auto">
-          الخدمة تعمل على port 3101 وتُغذّي الـ backend مباشرة.
-        </p>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".zip"
+          className="hidden"
+          onChange={onPickFile}
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploadBusy}
+          className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 disabled:opacity-40"
+        >
+          {uploadBusy
+            ? <><RefreshCw size={14} className="inline animate-spin ml-1" /> جارٍ الرفع {uploadProgress}%</>
+            : <><Upload size={14} className="inline ml-1" /> رفع / تجديد الجلسة (session.zip)</>
+          }
+        </button>
       </div>
+
+      {/* شريط تقدّم الرفع */}
+      {uploadBusy && (
+        <div className="w-full bg-gray-100 rounded h-2 mb-3 overflow-hidden">
+          <div
+            className="bg-green-500 h-full transition-all"
+            style={{ width: `${uploadProgress}%` }}
+          />
+        </div>
+      )}
+
+      {/* تعليمات التجديد — مطويّة */}
+      <details className="text-xs text-gray-600 bg-gray-50 rounded p-2">
+        <summary className="cursor-pointer font-bold text-gray-700">
+          كيف أُجدّد الجلسة؟ (اتبع الخطوات عند انتهاء الجلسة)
+        </summary>
+        <ol className="list-decimal list-inside mt-2 mr-2 space-y-1 leading-relaxed">
+          <li>على جهازك، افتح PowerShell:
+            <pre className="bg-white border border-gray-200 rounded p-2 mt-1" dir="ltr">cd messages-scraper
+Remove-Item -Recurse -Force browser-data
+npm run spike</pre>
+          </li>
+          <li>ستفتح نافذة Chromium → سجّل دخول إلى Google → اربط Google Messages بـ QR من جوالك.</li>
+          <li>بعد ظهور آخر رسالة في الـ console، اضغط Ctrl+C لإغلاق المتصفّح.</li>
+          <li>اضغط المجلد إلى ملف <code className="bg-white border px-1">session.zip</code>:
+            <pre className="bg-white border border-gray-200 rounded p-2 mt-1" dir="ltr">.\scripts\pack-session.ps1</pre>
+          </li>
+          <li>ارجع إلى هذه الصفحة → اضغط <strong>"رفع / تجديد الجلسة"</strong> → اختر <code className="bg-white border px-1">session.zip</code>.</li>
+          <li>السيرفر سيستبدل الجلسة ويُعيد التشغيل تلقائياً. خلال ~30 ثانية تتحوّل الحالة لـ <strong>"يعمل"</strong>.</li>
+        </ol>
+      </details>
     </div>
   );
 }
