@@ -342,6 +342,8 @@ export class Scraper {
   }
 
   async _openTargetConversation() {
+    // إن وُجد cdk-overlay-backdrop (تلميح/نافذة CDK) فاضغط Escape ثم انقر عليه ليختفي.
+    await this._dismissCdkOverlay();
     const items = this.page.locator(this._activeSelectors.list_item);
     const total = await items.count();
     log.info('list', `conversations count=${total}`);
@@ -350,7 +352,9 @@ export class Scraper {
       const name = await this._getItemName(item);
       if (name && name.toLowerCase().includes(config.targetContact.toLowerCase())) {
         log.info('list', `target match index=${i} name="${name}"`);
-        await item.click();
+        await this._dismissCdkOverlay(); // مرّة أخرى مباشرة قبل النقر
+        // نقر بالقوّة (يتجاوز أي طبقة شفّافة مثل cdk-overlay-backdrop)
+        await item.click({ force: true, timeout: 15000 });
         await this.page.waitForTimeout(1500);
         const wrapperHit = await this._waitForAnySelector(
           MESSAGE_WRAPPER_CANDIDATES,
@@ -363,6 +367,22 @@ export class Scraper {
       }
     }
     throw new Error(`target_not_found:${config.targetContact}`);
+  }
+
+  /** يُغلق طبقات CDK overlay الشفّافة (تلميحات Material) التي تحجب النقر. */
+  async _dismissCdkOverlay() {
+    try {
+      const backdrop = this.page.locator('.cdk-overlay-backdrop').first();
+      if (await backdrop.count()) {
+        await this.page.keyboard.press('Escape').catch(() => {});
+        await this.page.waitForTimeout(150);
+        // إن بقيت الطبقة، انقر عليها لإغلاقها
+        if (await backdrop.count()) {
+          await backdrop.click({ timeout: 2000 }).catch(() => {});
+          await this.page.waitForTimeout(150);
+        }
+      }
+    } catch (_) { /* ignore */ }
   }
 
   /** يقرأ آخر N رسالة ويُعَلِّمها seen دون إرسال (نقطة الصفر للـ polling). */
