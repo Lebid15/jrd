@@ -733,6 +733,30 @@ router.get('/bank-message/debug-page', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/internal/bank-message/screenshot
+ * يعيد PNG لشاشة Chromium (لعرض QR في الواجهة).
+ */
+router.get('/bank-message/screenshot', async (req, res) => {
+  const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
+  const key = process.env.INTERNAL_API_KEY || '';
+  try {
+    const r = await fetch(`${url}/screenshot`, {
+      headers: { 'X-Internal-Api-Key': key },
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => '');
+      return res.status(r.status).type('application/json').send(txt || '{"error":"upstream"}');
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.code || e.message });
+  }
+});
+
 // ─── Session upload (لتجديد جلسة Google Messages على السيرفر) ───────────────
 /**
  * POST /api/internal/bank-message/upload-session

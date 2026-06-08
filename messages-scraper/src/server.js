@@ -66,8 +66,7 @@ app.post('/repair', internalAuth, async (req, res) => {
 });
 
 // تشخيص: ماذا يعرض Chromium الآن (URL + title + نص الـ body المختصر)؟
-app.get('/debug-page', internalAuth, async (req, res) => {
-  try {
+app.get('/debug-page', internalAuth, async (req, res) => {  try {
     const page = scraper.page;
     if (!page) return res.json({ error: 'no_page', state: scraper.state });
     const url = page.url();
@@ -82,6 +81,15 @@ app.get('/debug-page', internalAuth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// لقطة شاشة Chromium (لعرض QR في الواجهة بدلاً من رفع zip)
+app.get('/screenshot', internalAuth, async (req, res) => {
+  const buf = await scraper.screenshot();
+  if (!buf) return res.status(503).json({ error: 'no_screenshot', state: scraper.state });
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'no-store');
+  res.send(buf);
 });
 
 app.listen(config.port, config.host, () => {

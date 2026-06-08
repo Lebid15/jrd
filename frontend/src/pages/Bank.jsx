@@ -675,6 +675,11 @@ function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUpload
         </div>
       )}
 
+      {/* عرض QR Live من شاشة Chromium (للإقران من الواجهة بدون أي ZIP) */}
+      {reachable && ['pairing', 'session_expired'].includes(state) && (
+        <GmsgPairingQR onReload={onReload} />
+      )}
+
       {/* أزرار */}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <button
@@ -735,6 +740,46 @@ npm run spike</pre>
           <li>السيرفر سيستبدل الجلسة ويُعيد التشغيل تلقائياً. خلال ~30 ثانية تتحوّل الحالة لـ <strong>"يعمل"</strong>.</li>
         </ol>
       </details>
+    </div>
+  );
+}
+
+// ─── مكوّن QR لايف من شاشة Chromium على السيرفر ─────────────────────────────
+function GmsgPairingQR({ onReload }) {
+  const [tick, setTick] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), 4000);
+    return () => clearInterval(id);
+  }, []);
+  const src = `/api/internal/bank-message/screenshot?t=${tick}`;
+  return (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3" dir="rtl">
+      <p className="text-sm font-bold text-blue-800 mb-2">
+        📱 امسح QR من جوالك لإقران Google Messages
+      </p>
+      <p className="text-xs text-gray-700 mb-3 leading-relaxed">
+        على جوالك: افتح تطبيق <strong>Messages</strong> → اضغط صورة بروفايلك →{' '}
+        <strong>Device pairing</strong> → <strong>+ New device</strong> → امسح الصورة أدناه.
+      </p>
+      <div className="bg-white border rounded p-2 inline-block">
+        <img
+          src={src}
+          alt="QR pairing screen"
+          className="max-w-full block"
+          style={{ maxHeight: 400 }}
+          onError={(e) => { e.target.style.opacity = 0.3; }}
+        />
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-xs text-gray-600">
+        <RefreshCw size={12} className="animate-spin" />
+        تتحدّث الصورة تلقائياً كل 4 ثوان. بعد المسح، انتظر حتى تتحوّل الحالة لـ "يعمل".
+        <button
+          onClick={onReload}
+          className="mr-auto text-blue-600 hover:underline"
+        >
+          تحديث الآن
+        </button>
+      </div>
     </div>
   );
 }

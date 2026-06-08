@@ -119,17 +119,22 @@ export class Scraper {
         timeout: config.navTimeoutMs,
       });
 
-      // ننتظر "قشرة" قائمة المحادثات (= مقترن)
+      // قد نهبط على /web/welcome — نحاول تجاوزها بالضغط على زر "Get started" / "Continue"
       this.state = 'pairing';
+      await this._dismissWelcomeIfPresent();
+
+      // ننتظر "قشرة" قائمة المحادثات (= مقترن) — مهلة طويلة (30 د) لإتاحة مسح QR من الواجهة
       const shell = await this._waitForAnySelector(
         LIST_SHELL_CANDIDATES,
         config.pairingTimeoutSec * 1000,
         'shell',
       );
       if (!shell) {
+        // لا نرمي خطأ — نُبقي المتصفّح مفتوحاً ليرى المستخدم QR عبر /screenshot
         this.state = 'session_expired';
         this.lastError = 'pairing_timeout';
-        throw new Error('pairing_timeout (no conversation list shell)');
+        log.warn('start', 'pairing_timeout — browser kept open for manual QR via UI');
+        return { ok: false, state: this.state, hint: 'open /screenshot to scan QR' };
       }
       this._activeSelectors.list_shell = shell.selector;
 
@@ -176,6 +181,50 @@ export class Scraper {
     this.page = null;
     this.state = 'stopped';
     return { ok: true };
+  }
+
+  /** يلتقط لقطة شاشة لصفحة Chromium الحالية. يُستخدم لعرض QR في الواجهة. */
+  async screenshot() {
+    if (!this.page) return null;
+    try {
+      return await this.page.screenshot({ type: 'png', fullPage: false });
+    } catch (e) {
+      log.warn('screenshot', e.message);
+      return null;
+    }
+  }
+
+  /** يحاول تجاوز صفحة /web/welcome بالضغط على أوّل زر "Get started"/"Continue". */
+  async _dismissWelcomeIfPresent() {
+    try {
+      const url = this.page.url();
+      if (!/\/welcome/.test(url)) return;
+      log.info('welcome', `on welcome page: ${url} — attempting to advance`);
+      const candidates = [
+        'button:has-text("Get started")',
+        'button:has-text("Continue")',
+        'button:has-text("Next")',
+        'button:has-text("ابدأ")',
+        'button:has-text("متابعة")',
+        'button[type="submit"]',
+        'mw-welcome button',
+        'a[href*="/conversations"]',
+      ];
+      for (const sel of candidates) {
+        const loc = this.page.locator(sel).first();
+        if ((await loc.count().catch(() => 0)) > 0) {
+          try {
+            await loc.click({ timeout: 3000 });
+            log.info('welcome', `clicked: ${sel}`);
+            await this.page.waitForTimeout(2000);
+            return;
+          } catch (_) { /* try next */ }
+        }
+      }
+      log.info('welcome', 'no welcome button found — proceeding');
+    } catch (e) {
+      log.warn('welcome', e.message);
+    }
   }
 
   // ─── internals ──────────────────────────────────────────────────────────

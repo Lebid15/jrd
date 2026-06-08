@@ -32,7 +32,7 @@ export const config = {
 
   pollIntervalMs: int('GMSG_POLL_INTERVAL_MS', 12000),
   navTimeoutMs: int('GMSG_NAV_TIMEOUT_MS', 45000),
-  pairingTimeoutSec: int('GMSG_PAIRING_TIMEOUT_SEC', 300),
+  pairingTimeoutSec: int('GMSG_PAIRING_TIMEOUT_SEC', 1800),
 
   // عدد آخر الرسائل التي نقرأها كل دورة بحثاً عن الجديد
   scanLastN: int('GMSG_SCAN_LAST_N', 20),
