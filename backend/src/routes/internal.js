@@ -742,15 +742,16 @@ let _lastUploadAt = 0;
 router.post('/bank-message/upload-session', sessionUpload.single('session'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'ملف ZIP مطلوب (field name=session)' });
 
-  // ارفض رفعاً جديداً إذا كان السابق ما زال يعمل أو انتهى منذ <60 ثانية
+  // ارفض رفعاً جديداً إذا كان السابق ما زال يعمل أو انتهى منذ <5 دقائق
   const now = Date.now();
   if (_uploadInProgress) {
     try { fs.unlinkSync(req.file.path); } catch (_) {}
     return res.status(409).json({ error: 'رفع آخر قيد التنفيذ — انتظر…' });
   }
-  if (now - _lastUploadAt < 60_000) {
+  if (now - _lastUploadAt < 5 * 60_000) {
     try { fs.unlinkSync(req.file.path); } catch (_) {}
-    return res.status(429).json({ error: 'تم رفع جلسة قبل قليل — انتظر دقيقة قبل إعادة المحاولة' });
+    const waitSec = Math.ceil((5 * 60_000 - (now - _lastUploadAt)) / 1000);
+    return res.status(429).json({ error: `تم رفع جلسة قبل قليل — انتظر ${waitSec} ثانية` });
   }
   _uploadInProgress = true;
 
@@ -760,11 +761,11 @@ router.post('/bank-message/upload-session', sessionUpload.single('session'), asy
   let entriesCount = 0;
   let restartResult = null;
   try {
-    // 1) أوقِف الـ scraper أوّلاً (يُغلق Chromium ويُحرّر ملفات browser-data)
+    // 1) أوقِف الـ scraper أوّلاً (force=1 لتجاوز حماية pairing)
     const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
     const key = process.env.INTERNAL_API_KEY || '';
     try {
-      await fetch(`${url}/stop`, {
+      await fetch(`${url}/stop?force=1`, {
         method: 'POST',
         headers: { 'X-Internal-Api-Key': key },
       });

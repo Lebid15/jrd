@@ -42,6 +42,16 @@ app.post('/start', internalAuth, async (req, res) => {
 });
 
 app.post('/stop', internalAuth, async (req, res) => {
+  // رفض stop أثناء الإقلاع/الإقران النشط إلا بـ force=1 (يمنع حلقة stop/start)
+  const force = req.query.force === '1' || req.body?.force === true;
+  if (!force && ['starting', 'pairing', 'opening_chat'].includes(scraper.state)) {
+    return res.status(409).json({
+      ok: false,
+      refused: 'busy',
+      state: scraper.state,
+      hint: 'الـ scraper حالياً يحاول الإقران — أعد المحاولة بعد دقيقة أو استخدم ?force=1',
+    });
+  }
   const out = await scraper.stop();
   res.json(out);
 });
