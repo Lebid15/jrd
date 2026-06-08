@@ -784,22 +784,25 @@ router.post('/bank-message/upload-session', sessionUpload.single('session'), asy
     }
     zip.extractAllTo(dest, true);
 
+    // إزالة ملفات قفل Chromium المتبقّية (تُسبّب hang عند الإقلاع على Linux)
+    for (const lockName of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+      try { fs.rmSync(path.join(dest, lockName), { force: true }); } catch (_) {}
+    }
+
     // 4) سجّل وقت آخر تحديث للجلسة (يظهر في الواجهة)
     db.prepare(`
       INSERT INTO settings (key, value) VALUES ('gmsg_session_uploaded_at', ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(new Date().toISOString());
 
-    // 5) أعد تشغيل الـ scraper
-    try {
-      const r = await fetch(`${url}/start`, {
-        method: 'POST',
-        headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
-      });
-      restartResult = { status: r.status, body: await r.json().catch(() => ({})) };
-    } catch (e) {
-      restartResult = { error: e.code || e.message };
-    }
+    // 5) أعد تشغيل الـ scraper (fire-and-forget — لا ننتظر pairing/التشغيل الكامل)
+    //    استدعاء /start قد يستغرق حتى 300 ثانية لانتظار قشرة الواجهة،
+    //    لذلك نُطلقه بدون await ونرجع للواجهة فوراً.
+    fetch(`${url}/start`, {
+      method: 'POST',
+      headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
+    }).catch(() => { /* الواجهة تتابع الحالة عبر /status */ });
+    restartResult = { dispatched: true };
 
     res.json({
       ok: true,

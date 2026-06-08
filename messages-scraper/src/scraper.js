@@ -93,6 +93,12 @@ export class Scraper {
     log.info('start', 'launching persistent context', { dir: config.browserDataDir });
     fs.mkdirSync(config.browserDataDir, { recursive: true });
 
+    // إزالة ملفات قفل Chromium المتبقّية من جلسة سابقة (تتعطّل launchPersistentContext معها)
+    for (const lockName of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+      const p = path.join(config.browserDataDir, lockName);
+      try { fs.rmSync(p, { force: true }); } catch (_) { /* ignore */ }
+    }
+
     try {
       this.context = await chromium.launchPersistentContext(config.browserDataDir, {
         headless: config.headless,
