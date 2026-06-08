@@ -102,6 +102,7 @@ export class Scraper {
     try {
       this.context = await chromium.launchPersistentContext(config.browserDataDir, {
         headless: config.headless,
+        channel: process.env.GMSG_CHROME_CHANNEL || 'chrome', // استخدم Chrome الحقيقي (يقبله Google)
         viewport: { width: 1024, height: 768 },
         userAgent:
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -111,9 +112,29 @@ export class Scraper {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-software-rasterizer',
-          '--disable-features=VizDisplayCompositor,TranslateUI',
+          '--disable-features=VizDisplayCompositor,TranslateUI,IsolateOrigins,site-per-process',
           '--memory-pressure-off',
+          '--lang=en-US,en',
         ],
+      });
+
+      // stealth: إخفاء علامات الأتمتة قبل أيّ تنقّل
+      await this.context.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [1, 2, 3, 4, 5].map(() => ({ name: 'Chrome PDF Plugin' })),
+        });
+        // ضمن window.chrome (موجود في Chrome الحقيقي)
+        if (!window.chrome) window.chrome = { runtime: {} };
+        // permissions query بشكل طبيعي
+        const orig = window.navigator.permissions?.query?.bind(window.navigator.permissions);
+        if (orig) {
+          window.navigator.permissions.query = (p) =>
+            p.name === 'notifications'
+              ? Promise.resolve({ state: Notification.permission, onchange: null })
+              : orig(p);
+        }
       });
       this.page = this.context.pages()[0] || (await this.context.newPage());
       this.page.setDefaultTimeout(config.navTimeoutMs);

@@ -50,6 +50,10 @@ RUN cd messages-scraper && npm install --omit=dev && npm cache clean --force
 # the scraper's playwright version differs from the base image's bundled one).
 RUN cd scraper && npx playwright install chromium
 
+# Install real Chrome (not Chromium) for messages-scraper — Google's sign-in
+# rejects automated Chromium ("Couldn't sign you in / browser may not be secure").
+RUN cd messages-scraper && npx playwright install chrome --with-deps || true
+
 # Copy app source
 COPY backend/ ./backend/
 COPY scraper/ ./scraper/
