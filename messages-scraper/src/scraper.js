@@ -185,11 +185,16 @@ export class Scraper {
 
   /** يلتقط لقطة شاشة لصفحة Chromium الحالية. يُستخدم لعرض QR في الواجهة. */
   async screenshot() {
-    if (!this.page) return null;
+    if (!this.page) {
+      log.warn('screenshot', 'no page object available');
+      return null;
+    }
     try {
-      return await this.page.screenshot({ type: 'png', fullPage: false });
+      const buf = await this.page.screenshot({ type: 'png', fullPage: false, timeout: 8000 });
+      log.info('screenshot', `captured ${buf.length} bytes`);
+      return buf;
     } catch (e) {
-      log.warn('screenshot', e.message);
+      log.warn('screenshot', `error: ${e.message}`);
       return null;
     }
   }
