@@ -194,15 +194,16 @@ export class Scraper {
       return null;
     }
     try {
-      // omitBackground=false + animations=disabled يخفّف من إجهاد renderer
+      // JPEG + clip + low quality لتجنّب OOM في renderer على Railway
       const buf = await this.page.screenshot({
-        type: 'png',
-        fullPage: false,
+        type: 'jpeg',
+        quality: 60,
         timeout: 8000,
         animations: 'disabled',
         caret: 'hide',
+        clip: { x: 0, y: 0, width: 1024, height: 768 },
       });
-      log.info('screenshot', `captured ${buf.length} bytes`);
+      log.info('screenshot', `captured ${buf.length} bytes (jpeg)`);
       return buf;
     } catch (e) {
       log.warn('screenshot', `error: ${e.message}`);

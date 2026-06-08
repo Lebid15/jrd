@@ -749,7 +749,8 @@ router.get('/bank-message/screenshot', async (req, res) => {
       return res.status(r.status).type('application/json').send(txt || '{"error":"upstream"}');
     }
     const buf = Buffer.from(await r.arrayBuffer());
-    res.set('Content-Type', 'image/png');
+    const ct = r.headers.get('content-type') || 'image/jpeg';
+    res.set('Content-Type', ct);
     res.set('Cache-Control', 'no-store');
     res.send(buf);
   } catch (e) {

@@ -87,7 +87,7 @@ app.get('/debug-page', internalAuth, async (req, res) => {  try {
 app.get('/screenshot', internalAuth, async (req, res) => {
   const buf = await scraper.screenshot();
   if (!buf) return res.status(503).json({ error: 'no_screenshot', state: scraper.state });
-  res.set('Content-Type', 'image/png');
+  res.set('Content-Type', 'image/jpeg');
   res.set('Cache-Control', 'no-store');
   res.send(buf);
 });
