@@ -819,6 +819,31 @@ function GmsgPairingQR({ onReload }) {
     } finally { setBusy(false); }
   };
 
+  const gotoPairing = async () => {
+    setBusy(true);
+    try {
+      // ينقل المتصفّح مباشرة لصفحة الإقران (تجاوُز welcome + تجنّب Google OAuth الذي يُحجب على Chromium)
+      await api.post('/internal/bank-message/interact/goto', {
+        url: 'https://messages.google.com/web/authentication',
+      });
+      setTimeout(() => setTick(Date.now()), 1500);
+    } catch (err) {
+      toast.error('فشل: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
+  const gotoConversations = async () => {
+    setBusy(true);
+    try {
+      await api.post('/internal/bank-message/interact/goto', {
+        url: 'https://messages.google.com/web/conversations',
+      });
+      setTimeout(() => setTick(Date.now()), 1500);
+    } catch (err) {
+      toast.error('فشل: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
   const src = `/api/internal/bank-message/screenshot?t=${tick}`;
 
   return (
@@ -834,6 +859,17 @@ function GmsgPairingQR({ onReload }) {
       {url && (
         <div className="text-[10px] text-gray-500 mb-1 font-mono break-all" dir="ltr">{url}</div>
       )}
+
+      <div className="flex flex-wrap gap-2 mb-2">
+        <button onClick={gotoPairing} disabled={busy}
+          className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm hover:bg-purple-700 disabled:opacity-40">
+          🔗 اذهب لشاشة الإقران (QR)
+        </button>
+        <button onClick={gotoConversations} disabled={busy}
+          className="bg-indigo-600 text-white px-3 py-1.5 rounded text-sm hover:bg-indigo-700 disabled:opacity-40">
+          💬 افتح المحادثات
+        </button>
+      </div>
 
       <div
         className="bg-white border-2 border-blue-300 rounded overflow-hidden cursor-crosshair inline-block"
