@@ -91,10 +91,25 @@ function extractAmount(text) {
  * يحلّل الرسالة. يُرجع null لو لم نستطع استخلاص عملية صالحة.
  * keywords = { us: [], them: [], try: [], usd: [], ignore: [] }
  */
+// كلمات تجاهل مدمجة (دائماً مُفعَّلة، لا تعتمد على الإعدادات).
+// تُطابَق كـ substring في النصّ المُطبَّع، مع تمديد أيّ حرف 1+ مرّات،
+// لتلتقط: مطابقة، مطابقه، مطااابقة، المطابقة، تاكيد المطابقة، رسالة مطابقة... إلخ.
+// (التطبيع يحوّل ة→ه و إأآ→ا، فلا حاجة لإضافة كلّ الأشكال.)
+const BUILTIN_IGNORE_REGEXES = [
+  /م+ط+ا+ب+ق+ه+/u,   // "مطابقة" بأيّ امتداد وأيّ prefix/suffix
+];
+
 export function parseMessage(rawText, keywords) {
   if (!rawText) return null;
   const norm = normalize(rawText);
   if (!norm) return null;
+
+  // 0) تجاهل مدمج (مطابقة وأخواتها) — قبل أيّ شيء آخر
+  for (const re of BUILTIN_IGNORE_REGEXES) {
+    if (re.test(norm)) {
+      return { ignored: true, reason: 'matched_builtin_ignore' };
+    }
+  }
 
   // تجاهل لو فيها كلمة من قائمة "مطابقة"
   if (containsAny(norm, keywords.ignore || [])) {
@@ -122,15 +137,20 @@ export function parseMessage(rawText, keywords) {
 }
 
 /**
- * يحسب الـ delta (موجب/سالب) ليُطبَّق على الرصيد.
- *  - نحن نكتب "لنا"  → ‒amount   (نحن نقصنا ما عند الجهة لنا)
- *  - نحن نكتب "لكم"  → +amount
- *  - هم  يكتبون "لنا" → +amount   (الجهة أقرّت أن لنا عندها)
- *  - هم  يكتبون "لكم" → ‒amount
+ * يحسب الـ delta (موجب/سالب) ليُطبَّق على رصيد البند المرتبط بالمجموعة.
+ *
+ * اصطلاح الرصيد: الموجب = "لنا عند الجهة" ، السالب = "لهم علينا".
+ *
+ *  - نحن (admin) نكتب "لنا 2500"   → نحن نُقرّ أنّ لنا عندهم 2500     →  +amount
+ *  - نحن (admin) نكتب "لكم 2500"   → نحن نُقرّ أنّ لهم علينا 2500     →  −amount
+ *  - هم يكتبون     "لنا 2500"      → هم يقولون "لنا (نحن) عندكم 2500" →  −amount
+ *  - هم يكتبون     "لكم 2500"      → هم يقولون "لكم (نحن) علينا 2500" →  +amount
+ *
+ * أي: عندما يكتب "هم" تنعكس دلالة الضمائر (لنا/لكم) عن منظور حساباتنا.
  */
 export function computeDelta({ direction, amount, source }) {
   if (source === 'us') {
-    return direction === 'lana' ? -amount : +amount;
+    return direction === 'lana' ? +amount : -amount;
   }
-  return direction === 'lana' ? +amount : -amount;
+  return direction === 'lana' ? -amount : +amount;
 }
