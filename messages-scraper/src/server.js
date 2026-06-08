@@ -92,6 +92,52 @@ app.get('/screenshot', internalAuth, async (req, res) => {
   res.send(buf);
 });
 
+// ─── تفاعل عن بُعد مع Chromium (لإتمام التسجيل + الإقران من الواجهة) ─────────
+app.post('/interact/click', internalAuth, async (req, res) => {
+  try {
+    const { x, y } = req.body || {};
+    if (typeof x !== 'number' || typeof y !== 'number') {
+      return res.status(400).json({ error: 'x and y (numbers) required' });
+    }
+    res.json(await scraper.remoteClick(x, y));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/interact/type', internalAuth, async (req, res) => {
+  try {
+    const { text } = req.body || {};
+    if (typeof text !== 'string') return res.status(400).json({ error: 'text required' });
+    res.json(await scraper.remoteType(text));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/interact/key', internalAuth, async (req, res) => {
+  try {
+    const { key } = req.body || {};
+    if (typeof key !== 'string') return res.status(400).json({ error: 'key required' });
+    res.json(await scraper.remoteKey(key));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/interact/scroll', internalAuth, async (req, res) => {
+  try {
+    const dy = Number(req.body?.dy || 0);
+    res.json(await scraper.remoteScroll(dy));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/interact/goto', internalAuth, async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    if (typeof url !== 'string') return res.status(400).json({ error: 'url required' });
+    res.json(await scraper.remoteGoto(url));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/interact/url', internalAuth, async (req, res) => {
+  res.json({ url: await scraper.remoteUrl(), state: scraper.state });
+});
+
 app.listen(config.port, config.host, () => {
   log.info('boot', `messages-scraper listening on ${config.host}:${config.port}`);
   if (config.autoStart) {

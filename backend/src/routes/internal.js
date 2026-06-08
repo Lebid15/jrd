@@ -735,7 +735,7 @@ router.get('/bank-message/debug-page', async (req, res) => {
 
 /**
  * GET /api/internal/bank-message/screenshot
- * يعيد PNG لشاشة Chromium (لعرض QR في الواجهة).
+ * يعيد JPEG لشاشة Chromium (لعرض QR في الواجهة).
  */
 router.get('/bank-message/screenshot', async (req, res) => {
   const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
@@ -757,6 +757,30 @@ router.get('/bank-message/screenshot', async (req, res) => {
     res.status(500).json({ error: e.code || e.message });
   }
 });
+
+// ─── proxy عام لكل /interact/* (نقر/كتابة/مفتاح/تمرير/تنقّل) ────────────────
+async function _proxyToScraper(req, res, subpath) {
+  const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
+  const key = process.env.INTERNAL_API_KEY || '';
+  try {
+    const r = await fetch(`${url}${subpath}`, {
+      method: req.method,
+      headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
+      body: req.method === 'GET' ? undefined : JSON.stringify(req.body || {}),
+    });
+    const data = await r.json().catch(() => ({}));
+    res.status(r.status).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.code || e.message });
+  }
+}
+
+router.post('/bank-message/interact/click',  (req, res) => _proxyToScraper(req, res, '/interact/click'));
+router.post('/bank-message/interact/type',   (req, res) => _proxyToScraper(req, res, '/interact/type'));
+router.post('/bank-message/interact/key',    (req, res) => _proxyToScraper(req, res, '/interact/key'));
+router.post('/bank-message/interact/scroll', (req, res) => _proxyToScraper(req, res, '/interact/scroll'));
+router.post('/bank-message/interact/goto',   (req, res) => _proxyToScraper(req, res, '/interact/goto'));
+router.get( '/bank-message/interact/url',    (req, res) => _proxyToScraper(req, res, '/interact/url'));
 
 // ─── Session upload (لتجديد جلسة Google Messages على السيرفر) ───────────────
 /**

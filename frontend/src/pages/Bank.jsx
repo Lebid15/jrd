@@ -744,42 +744,156 @@ npm run spike</pre>
   );
 }
 
-// ─── مكوّن QR لايف من شاشة Chromium على السيرفر ─────────────────────────────
+// ─── مكوّن متصفّح تفاعلي عن بُعد (لإتمام تسجيل دخول Google + الإقران) ──────
 function GmsgPairingQR({ onReload }) {
   const [tick, setTick] = useState(Date.now());
+  const [typing, setTyping] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [url, setUrl] = useState('');
+  const imgRef = useRef(null);
+
+  // الـ viewport على السيرفر = 1024x768 (نفس clip في scraper.screenshot)
+  const SRV_W = 1024;
+  const SRV_H = 768;
+
   useEffect(() => {
-    const id = setInterval(() => setTick(Date.now()), 4000);
+    const id = setInterval(() => setTick(Date.now()), 3000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const r = await api.get('/internal/bank-message/interact/url');
+        setUrl(r.data?.url || '');
+      } catch { /* ignore */ }
+    }, 4000);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleClick = async (e) => {
+    if (busy || !imgRef.current) return;
+    const rect = imgRef.current.getBoundingClientRect();
+    const xRel = (e.clientX - rect.left) / rect.width;
+    const yRel = (e.clientY - rect.top) / rect.height;
+    const x = Math.round(xRel * SRV_W);
+    const y = Math.round(yRel * SRV_H);
+    setBusy(true);
+    try {
+      await api.post('/internal/bank-message/interact/click', { x, y });
+      setTimeout(() => setTick(Date.now()), 600); // تحديث الصورة بعد النقر
+    } catch (err) {
+      toast.error('فشل النقر: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
+  const sendType = async () => {
+    if (!typing) return;
+    setBusy(true);
+    try {
+      await api.post('/internal/bank-message/interact/type', { text: typing });
+      setTyping('');
+      setTimeout(() => setTick(Date.now()), 400);
+    } catch (err) {
+      toast.error('فشل: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
+  const sendKey = async (key) => {
+    setBusy(true);
+    try {
+      await api.post('/internal/bank-message/interact/key', { key });
+      setTimeout(() => setTick(Date.now()), 600);
+    } catch (err) {
+      toast.error('فشل: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
+  const sendScroll = async (dy) => {
+    setBusy(true);
+    try {
+      await api.post('/internal/bank-message/interact/scroll', { dy });
+      setTimeout(() => setTick(Date.now()), 400);
+    } catch (err) {
+      toast.error('فشل: ' + (err.response?.data?.error || err.message));
+    } finally { setBusy(false); }
+  };
+
   const src = `/api/internal/bank-message/screenshot?t=${tick}`;
+
   return (
     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3" dir="rtl">
       <p className="text-sm font-bold text-blue-800 mb-2">
-        📱 امسح QR من جوالك لإقران Google Messages
+        🖥️ متصفّح Chromium على السيرفر (انقر على الصورة للتفاعل)
       </p>
-      <p className="text-xs text-gray-700 mb-3 leading-relaxed">
-        على جوالك: افتح تطبيق <strong>Messages</strong> → اضغط صورة بروفايلك →{' '}
-        <strong>Device pairing</strong> → <strong>+ New device</strong> → امسح الصورة أدناه.
+      <p className="text-xs text-gray-700 mb-2 leading-relaxed">
+        سجّل دخول إلى Google ← انتقل لـ Messages ← أكمِل الإقران (مطابقة الرقم).
+        كل نقرة/ضغطة مفتاح تُنفَّذ على السيرفر مباشرة.
       </p>
-      <div className="bg-white border rounded p-2 inline-block">
+
+      {url && (
+        <div className="text-[10px] text-gray-500 mb-1 font-mono break-all" dir="ltr">{url}</div>
+      )}
+
+      <div
+        className="bg-white border-2 border-blue-300 rounded overflow-hidden cursor-crosshair inline-block"
+        style={{ maxWidth: '100%' }}
+      >
         <img
+          ref={imgRef}
           src={src}
-          alt="QR pairing screen"
-          className="max-w-full block"
-          style={{ maxHeight: 400 }}
-          onError={(e) => { e.target.style.opacity = 0.3; }}
+          alt="Chromium remote view"
+          onClick={handleClick}
+          className="block select-none"
+          style={{ maxWidth: '100%', height: 'auto', display: 'block', opacity: busy ? 0.6 : 1 }}
+          draggable={false}
         />
       </div>
-      <div className="mt-2 flex items-center gap-2 text-xs text-gray-600">
-        <RefreshCw size={12} className="animate-spin" />
-        تتحدّث الصورة تلقائياً كل 4 ثوان. بعد المسح، انتظر حتى تتحوّل الحالة لـ "يعمل".
-        <button
-          onClick={onReload}
-          className="mr-auto text-blue-600 hover:underline"
-        >
-          تحديث الآن
+
+      <div className="mt-2 flex flex-wrap gap-2 items-center">
+        <input
+          type="text"
+          value={typing}
+          onChange={(e) => setTyping(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') sendType(); }}
+          placeholder="اكتب نصاً (ثم Enter للإرسال)"
+          className="flex-1 min-w-[180px] border border-blue-300 rounded px-2 py-1 text-sm"
+          dir="ltr"
+          disabled={busy}
+        />
+        <button onClick={sendType} disabled={busy || !typing}
+          className="bg-blue-600 text-white px-3 py-1 rounded text-sm disabled:opacity-40">
+          أرسل النصّ
+        </button>
+        <button onClick={() => sendKey('Enter')} disabled={busy}
+          className="bg-gray-600 text-white px-3 py-1 rounded text-sm disabled:opacity-40">
+          Enter
+        </button>
+        <button onClick={() => sendKey('Tab')} disabled={busy}
+          className="bg-gray-600 text-white px-3 py-1 rounded text-sm disabled:opacity-40">
+          Tab
+        </button>
+        <button onClick={() => sendKey('Backspace')} disabled={busy}
+          className="bg-gray-600 text-white px-3 py-1 rounded text-sm disabled:opacity-40">
+          ⌫
+        </button>
+        <button onClick={() => sendScroll(300)} disabled={busy}
+          className="bg-gray-500 text-white px-2 py-1 rounded text-sm disabled:opacity-40">
+          ↓ تمرير
+        </button>
+        <button onClick={() => sendScroll(-300)} disabled={busy}
+          className="bg-gray-500 text-white px-2 py-1 rounded text-sm disabled:opacity-40">
+          ↑ تمرير
+        </button>
+        <button onClick={() => setTick(Date.now())}
+          className="text-blue-600 hover:underline text-xs mr-auto">
+          تحديث الصورة الآن
         </button>
       </div>
+
+      <p className="text-[11px] text-gray-500 mt-2">
+        💡 الصورة تتحدّث تلقائياً كل 3 ثوان. بعد إتمام الإقران، الحالة تتحوّل لـ "يعمل".
+      </p>
     </div>
   );
 }

@@ -220,6 +220,42 @@ export class Scraper {
     }
   }
 
+  // ─── تفاعل عن بُعد (نقر/كتابة/تنقّل) لإتمام الإقران من الواجهة ─────────────
+  async remoteClick(x, y) {
+    if (!this.page) throw new Error('no_page');
+    await this.page.mouse.click(x, y, { delay: 50 });
+    return { ok: true, x, y };
+  }
+
+  async remoteType(text) {
+    if (!this.page) throw new Error('no_page');
+    await this.page.keyboard.type(text, { delay: 20 });
+    return { ok: true, length: text.length };
+  }
+
+  async remoteKey(key) {
+    if (!this.page) throw new Error('no_page');
+    await this.page.keyboard.press(key);
+    return { ok: true, key };
+  }
+
+  async remoteScroll(dy) {
+    if (!this.page) throw new Error('no_page');
+    await this.page.mouse.wheel(0, dy);
+    return { ok: true, dy };
+  }
+
+  async remoteGoto(url) {
+    if (!this.page) throw new Error('no_page');
+    await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    return { ok: true, url: this.page.url() };
+  }
+
+  async remoteUrl() {
+    if (!this.page) return null;
+    return this.page.url();
+  }
+
   /** يحاول تجاوز صفحة /web/welcome بالضغط على أوّل زر "Get started"/"Continue". */
   async _dismissWelcomeIfPresent() {
     try {
