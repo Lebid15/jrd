@@ -112,7 +112,10 @@ export class Scraper {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-software-rasterizer',
-          '--disable-features=VizDisplayCompositor,TranslateUI,IsolateOrigins,site-per-process',
+          // ملاحظة: لا نعطّل IsolateOrigins/site-per-process لأنّها تكسر
+          // Service Worker و IndexedDB التي يحفظ فيها Google Messages
+          // بيانات الإقران (وإلا يدخل دوامة welcome ↔ pair ↔ welcome).
+          '--disable-features=TranslateUI',
           '--memory-pressure-off',
           '--lang=en-US,en',
         ],
