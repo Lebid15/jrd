@@ -102,13 +102,17 @@ export class Scraper {
     try {
       this.context = await chromium.launchPersistentContext(config.browserDataDir, {
         headless: config.headless,
-        viewport: { width: 1280, height: 800 },
+        viewport: { width: 1024, height: 768 },
         userAgent:
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         args: [
           '--disable-blink-features=AutomationControlled',
           '--no-sandbox',
           '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-features=VizDisplayCompositor,TranslateUI',
+          '--memory-pressure-off',
         ],
       });
       this.page = this.context.pages()[0] || (await this.context.newPage());
@@ -190,11 +194,27 @@ export class Scraper {
       return null;
     }
     try {
-      const buf = await this.page.screenshot({ type: 'png', fullPage: false, timeout: 8000 });
+      // omitBackground=false + animations=disabled يخفّف من إجهاد renderer
+      const buf = await this.page.screenshot({
+        type: 'png',
+        fullPage: false,
+        timeout: 8000,
+        animations: 'disabled',
+        caret: 'hide',
+      });
       log.info('screenshot', `captured ${buf.length} bytes`);
       return buf;
     } catch (e) {
       log.warn('screenshot', `error: ${e.message}`);
+      // إن انهار Target → أعد التشغيل التلقائي (في الخلفية)
+      if (/Target crashed|browser has been closed|context or browser/i.test(e.message)) {
+        log.info('screenshot', 'target crashed — scheduling restart');
+        setImmediate(() => {
+          this.stop().catch(() => {}).then(() => {
+            setTimeout(() => this.start().catch(() => {}), 2000);
+          });
+        });
+      }
       return null;
     }
   }
