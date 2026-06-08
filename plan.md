@@ -8,14 +8,16 @@
 
 ---
 
-## 📊 حالة المشروع — آخر تحديث: 5 يونيو 2026
+## 📊 حالة المشروع — آخر تحديث: 8 يونيو 2026
 
 | البند | الوصف | الحالة |
 |-------|-------|--------|
 | 1 | روبوت موقع شحن الألعاب (bayi.alayatl.com) | ✅ **منجز ومنشور** |
 | 2 | روبوت موقع SMM (followers-store.com) | ✅ **يعمل بنجاح** |
-| 3 | البنك (كويت ترك) — SMS تلقائي | ✅ **منجز ومنشور** |
+| 3 | البنك (كويت ترك) — SMS عبر SMS Forwarder | ✅ **منجز** (سيُستبدل بالبند 3.5) |
+| 3.5 | البنك (كويت ترك) — Google Messages Web scraper | 🆕 **مخطّط — التالي للتنفيذ** |
 | 4 | بوت واتساب — البنية الأساسية | ✅ **منجز ويعمل** |
+| 4.1 | إصلاح إشارات `computeDelta` + تجاهل رسائل "مطابقة" تلقائياً | ✅ **منجز (8 يونيو 2026)** |
 | 5 | مطابقة الصرافين | ⏳ لم يبدأ |
 | 6 | مجموعة غلة + العامل الميداني | ⏳ لم يبدأ |
 | 7 | نوعا الحوالات من المحلات | ⏳ لم يبدأ |
@@ -82,6 +84,84 @@
 - إضافة checkbox لكل صفّ + حذف جماعي.
 - ترقيم الصفحات (20/30 صفّ).
 - شريط بحث/فلترة.
+
+---
+
+## 🆕 البند 3.5 — البنك (كويت ترك) عبر Google Messages Web — مخطّط
+
+> **السبب**: تطبيق `SMS Forwarder` على الجوال غير موثوق (يفوّت رسائل، يتأخّر، يتوقّف لو نام النظام، يخلط رسائل بنوك أخرى). الحل: قراءة الرسائل مباشرة من **messages.google.com** عبر متصفّح مُؤتمَت (بنفس فلسفة روبوت `bayi.alayatl.com` وبوت الواتساب).
+
+### المصدر
+- الرابط: <https://messages.google.com/web/conversations/...>
+- المحادثة الهدف: المُرسِل **`KUVEYT TURK`** فقط (يُحدَّد من خلال DOM — title/header اسم جهة الاتصال).
+- أيّ مُرسِل آخر يُتجاهَل تماماً (لا parsing، لا تخزين).
+
+### المعمارية المقترحة (نفس فلسفة `scraper/` و `bot/`)
+- **خدمة جديدة منفصلة**: مجلد `messages-scraper/` (Node + Playwright + Express صغير على port 3101).
+- **Persistent Context**: `messages-scraper/browser-data/` لحفظ جلسة Google Messages بعد الإقران (مثل `scraper/browser-data/`).
+- **آلية الإقران (أوّل مرّة فقط)**:
+  1. تشغيل المتصفّح بـ `headless: false` محلياً (لمرّة واحدة).
+  2. الذهاب إلى `messages.google.com/web` → يظهر QR.
+  3. المستخدم يفتح تطبيق Messages على الجوال → الإعدادات → Device pairing → يمسح QR.
+  4. بعد الاقتران، الجلسة تُحفَظ في `browser-data/` ولا حاجة لإعادتها (مدة الجلسة طويلة، شهور).
+- **في الإنتاج**: `headless: true`. لو انتهت الجلسة (يحدث نادراً) تظهر رسالة خطأ واضحة في الواجهة + زرّ "إعادة الإقران" يفتح وضع `headless: false` لجلسة QR جديدة (مثل واجهة الواتساب).
+- **`--no-sandbox`** على Railway (نفس الإصلاح الموجود في `scraper/`).
+- **Volume على Railway** لحفظ `browser-data/` (مثل ما عملنا لـ `scraper/` و `bot/auth_sessions/`).
+
+### آلية القراءة
+- بعد فتح محادثة KUVEYT TURK، نراقب آخر الرسائل:
+  - **Polling خفيف** كل 10–15 ثانية (أبسط من MutationObserver وأكثر موثوقية مع تحديثات DOM).
+  - أو **MutationObserver** داخل `page.exposeFunction` للتنبّه الفوري — يُقرَّر لاحقاً حسب استقرار DOM.
+- **Deduplication**: لكل رسالة بصمة `hash(timestamp + amount + counterparty)` → جدول `bank_message_seen` لمنع التكرار عند restart.
+- **Bootstrap**: عند أوّل تشغيل بعد الإقران، لا نُعالج التاريخ كلّه. نأخذ فقط الرسائل بعد لحظة `started_at`.
+
+### استخدام الـ Parser الحالي
+- النصّ الخام لكل رسالة جديدة يُرسَل إلى endpoint موجود (أو جديد) في backend.
+- نُعيد استخدام **نفس parser كويت ترك** الموجود في `backend/src/routes/bank.js` بدون تغيير (يعرف `para geldi` / `para gönderildi` + `Tutar` + الاتجاه).
+- بذلك: **صفر مخاطر** على المنطق الحالي للبنك.
+
+### نقاط API
+- **داخلية** (محمية بـ `X-Internal-Api-Key` مثل `/api/internal/ingest`):
+  - `POST /api/internal/bank-message/ingest` — يستقبل `{ text, timestamp, message_id }` من scraper → يُمرّر للـ parser الحالي → يحدّث رصيد البنك + يُضيف صفّاً في `bank_transactions` (مع `source='gmsg'` للتمييز عن `source='sms'`).
+- **خدمة الـ scraper** (port 3101):
+  - `GET /status` → `{ state: 'idle'|'pairing'|'running'|'session_expired', last_seen_at, messages_processed_total }`
+  - `POST /start` → يفتح المتصفّح ويبدأ المراقبة
+  - `POST /repair` → يفتح وضع QR (headless:false محلياً، أو يظهر QR في الواجهة عبر screenshot كما يفعل الواتساب)
+  - `POST /stop`
+
+### الواجهة (صفحة `Bank.jsx` الحالية)
+- بطاقة جديدة أعلى الصفحة: **"مصدر رسائل البنك"** فيها:
+  - مفتاحان: `SMS Forwarder` (القديم) | `Google Messages Web` (الجديد). نفعّل واحداً فقط.
+  - حالة الاتصال (نفس فكرة `STATE_LABELS` في `WhatsApp.jsx`).
+  - زرّ "إعادة الإقران" + عرض QR عند الحاجة.
+  - عدّاد: آخر رسالة مُلتقطة منذ كم دقيقة.
+
+### تكامل النشر (Railway)
+- متغيّرات بيئة جديدة:
+  - `GMSG_SCRAPER_URL=http://localhost:3101`
+  - `GMSG_BROWSER_DATA=/data/gmsg-browser-data`
+  - `INTERNAL_API_KEY` (يُعاد استخدامه)
+- تعديل `Dockerfile` لتضمين Chromium dependencies (موجودة أصلاً للـ scraper الحالي).
+- تعديل `start.sh` ليشغّل الخدمة الجديدة (backend + bot + messages-scraper).
+
+### مراحل التنفيذ (نقترح بهذا الترتيب)
+1. **Spike محلي**: نسخة Playwright صغيرة تفتح Google Messages، تنتظر إقران QR، تطبع آخر رسالة من KUVEYT TURK في console. (للتأكد من ثبات selectors.)
+2. توثيق DOM selectors في `memory/repo/`.
+3. بناء `messages-scraper/` بهيكل مماثل لـ `bot/`.
+4. إضافة endpoint `/api/internal/bank-message/ingest`.
+5. واجهة في `Bank.jsx`.
+6. نشر على Railway مع Volume.
+7. تشغيل المصدرَين بالتوازي لمدة 24 ساعة لمقارنة الموثوقية، ثم إيقاف SMS Forwarder.
+
+### مخاطر معروفة
+- Google قد يطلب 2FA إعادة-تحقّق دورياً → نلتقطها كـ `session_expired` ونعرض القرار للمستخدم.
+- تغييرات DOM في Google Messages (احتمال متوسّط) → selectors قابلة للتعديل من ملف منفصل بسهولة.
+- استهلاك RAM (Chromium مفتوح دائماً) → نراقب على Railway. الحلّ الاحتياطي: تشغيل/إغلاق دورياً.
+
+### نقاش لاحق (نحسمه في المحادثة الجديدة)
+- هل نُبقي SMS Forwarder كـ fallback أم نزيله بعد التحقّق؟
+- Polling 10s أم 30s؟
+- هل نريد إشعاراً (واتساب/بريد) عند فقدان الجلسة؟
 
 ---
 
