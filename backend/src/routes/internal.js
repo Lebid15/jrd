@@ -735,8 +735,24 @@ const sessionUpload = multer({
   },
 });
 
+// قفل بسيط في الذاكرة لمنع الرفع المتزامن المتعدّد (Cloudflare retry, double-click, ...)
+let _uploadInProgress = false;
+let _lastUploadAt = 0;
+
 router.post('/bank-message/upload-session', sessionUpload.single('session'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'ملف ZIP مطلوب (field name=session)' });
+
+  // ارفض رفعاً جديداً إذا كان السابق ما زال يعمل أو انتهى منذ <60 ثانية
+  const now = Date.now();
+  if (_uploadInProgress) {
+    try { fs.unlinkSync(req.file.path); } catch (_) {}
+    return res.status(409).json({ error: 'رفع آخر قيد التنفيذ — انتظر…' });
+  }
+  if (now - _lastUploadAt < 60_000) {
+    try { fs.unlinkSync(req.file.path); } catch (_) {}
+    return res.status(429).json({ error: 'تم رفع جلسة قبل قليل — انتظر دقيقة قبل إعادة المحاولة' });
+  }
+  _uploadInProgress = true;
 
   const dest = process.env.GMSG_BROWSER_DATA
     || path.resolve(process.cwd(), '..', 'messages-scraper', 'browser-data');
@@ -814,6 +830,8 @@ router.post('/bank-message/upload-session', sessionUpload.single('session'), asy
     res.status(500).json({ error: e.message, where: 'unzip_or_restart' });
   } finally {
     try { fs.unlinkSync(req.file.path); } catch (_) {}
+    _uploadInProgress = false;
+    _lastUploadAt = Date.now();
   }
 });
 
