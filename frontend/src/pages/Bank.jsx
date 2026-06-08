@@ -75,8 +75,12 @@ export default function Bank() {
   // ─── Google Messages scraper status ─────────────────────────────────────
   const loadGmsgStatus = useCallback(async () => {
     try {
-      const r = await api.get('/internal/bank-message/status');
-      setGmsgStatus(r.data);
+      const [s, info] = await Promise.allSettled([
+        api.get('/internal/bank-message/status'),
+        api.get('/internal/bank-message/session-info'),
+      ]);
+      setGmsgStatus(s.status === 'fulfilled' ? s.value.data : { reachable: false, error: 'load_failed' });
+      setGmsgSessionInfo(info.status === 'fulfilled' ? info.value.data : null);
     } catch {
       setGmsgStatus({ reachable: false, error: 'load_failed' });
     }
@@ -98,6 +102,33 @@ export default function Bank() {
       toast.error('فشل: ' + (e.response?.data?.error || e.message));
     } finally {
       setGmsgBusy(false);
+    }
+  };
+
+  const uploadGmsgSession = async (file) => {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      return toast.error('الملف يجب أن يكون .zip');
+    }
+    setGmsgUploadBusy(true);
+    setGmsgUploadProgress(0);
+    try {
+      const fd = new FormData();
+      fd.append('session', file);
+      await api.post('/internal/bank-message/upload-session', fd, {
+        timeout: 600000,
+        onUploadProgress: (e) => {
+          if (e.total) setGmsgUploadProgress(Math.round((e.loaded / e.total) * 100));
+        },
+      });
+      toast.success('تم رفع الجلسة — السيرفر يُعيد التشغيل…');
+      setTimeout(loadGmsgStatus, 3000);
+      setTimeout(loadGmsgStatus, 15000);
+    } catch (e) {
+      toast.error('فشل الرفع: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setGmsgUploadBusy(false);
+      setGmsgUploadProgress(0);
     }
   };
 
