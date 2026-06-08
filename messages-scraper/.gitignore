@@ -3,3 +3,4 @@ node_modules/
 browser-data/
 session.zip
 *.log
+test*.png
