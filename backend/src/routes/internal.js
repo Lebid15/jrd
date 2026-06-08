@@ -715,6 +715,24 @@ router.post('/bank-message/start', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/internal/bank-message/debug-page
+ * يعيد URL/title/body من Chromium الحالي للتشخيص.
+ */
+router.get('/bank-message/debug-page', async (req, res) => {
+  const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
+  const key = process.env.INTERNAL_API_KEY || '';
+  try {
+    const r = await fetch(`${url}/debug-page`, {
+      headers: { 'X-Internal-Api-Key': key },
+    });
+    const data = await r.json().catch(() => ({}));
+    res.status(r.status).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.code || e.message });
+  }
+});
+
 // ─── Session upload (لتجديد جلسة Google Messages على السيرفر) ───────────────
 /**
  * POST /api/internal/bank-message/upload-session

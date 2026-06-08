@@ -65,6 +65,25 @@ app.post('/repair', internalAuth, async (req, res) => {
   });
 });
 
+// تشخيص: ماذا يعرض Chromium الآن (URL + title + نص الـ body المختصر)؟
+app.get('/debug-page', internalAuth, async (req, res) => {
+  try {
+    const page = scraper.page;
+    if (!page) return res.json({ error: 'no_page', state: scraper.state });
+    const url = page.url();
+    const title = await page.title().catch(() => null);
+    const bodyText = await page.evaluate(() =>
+      (document.body?.innerText || '').slice(0, 1500)
+    ).catch(() => null);
+    const html = await page.evaluate(() =>
+      (document.body?.innerHTML || '').slice(0, 2000)
+    ).catch(() => null);
+    res.json({ state: scraper.state, url, title, body_text: bodyText, html_snippet: html });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.listen(config.port, config.host, () => {
   log.info('boot', `messages-scraper listening on ${config.host}:${config.port}`);
   if (config.autoStart) {
