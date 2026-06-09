@@ -19,6 +19,8 @@ export class Session {
     this.phoneNumber = null;
     this.sock = null;
     this._onQR = null;         // callback للواجهة
+    this._reconnectAttempts = 0; // exponential backoff counter
+    this._reconnectTimer = null; // مرجع timer لمنع الازدواج
   }
 
   async start({ force = false } = {}) {
@@ -62,6 +64,7 @@ export class Session {
         this.state = 'connected';
         this.qrDataUrl = null;
         this.phoneNumber = this.sock.user?.id?.split(':')[0] || null;
+        this._reconnectAttempts = 0; // أعد العدّاد عند نجاح الاتصال
         logger.info({ tenant: this.tenantId, phone: this.phoneNumber }, 'Connected');
 
         // عبّئ كاش أسماء المجموعات مسبقاً (يتفادى timeouts عند ورود الرسائل)
@@ -91,13 +94,20 @@ export class Session {
         }
 
         // restartRequired = اقتران ناجح، نحتاج إعادة فتح socket فوراً بنفس creds
-        // باقي الأخطاء = انقطاع شبكي → إعادة محاولة بعد تأخير
-        const delay = restartRequired ? 0 : 5000;
+        // باقي الأخطاء = انقطاع شبكي → exponential backoff لمنع spam على الخادم
+        this._reconnectAttempts = restartRequired ? 0 : Math.min(this._reconnectAttempts + 1, 7);
+        const delay = restartRequired
+          ? 0
+          : Math.min(60000, 2000 * 2 ** (this._reconnectAttempts - 1)); // 2s,4s,8s,16s,32s,60s,60s
         this.state = 'connecting';
-        setTimeout(() => {
-          this.start({ force: true }).catch(err =>
-            logger.error({ tenant: this.tenantId, err }, 'Reconnect failed')
-          );
+        if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(() => {
+          this._reconnectTimer = null;
+          this.start({ force: true }).catch(err => {
+            logger.error({ tenant: this.tenantId, err: err.message }, 'Reconnect failed — health-check سيحاول لاحقاً');
+            // عند فشل start نفسها، أعد الحالة إلى idle ليتمكّن health-check من إعادة المحاولة
+            this.state = 'idle';
+          });
         }, delay);
       }
     });

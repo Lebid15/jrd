@@ -65,6 +65,20 @@ app.post('/repair', internalAuth, async (req, res) => {
   });
 });
 
+/**
+ * POST /recheck
+ * فحص فوري: هل اكتمل الإقران (قائمة المحادثات ظاهرة)؟ إن نعم — انتقل لـ running
+ * بدون إعادة تشغيل المتصفّح. يُستدعى من زر "تحديث الحالة" في الواجهة.
+ */
+app.post('/recheck', internalAuth, async (req, res) => {
+  try {
+    const recovered = await scraper.recheckPairing();
+    res.json({ ok: true, recovered, state: scraper.state });
+  } catch (e) {
+    res.status(500).json({ error: e.message, state: scraper.state });
+  }
+});
+
 // تشخيص: ماذا يعرض Chromium الآن (URL + title + نص الـ body المختصر)؟
 app.get('/debug-page', internalAuth, async (req, res) => {  try {
     const page = scraper.page;

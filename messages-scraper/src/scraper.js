@@ -36,6 +36,8 @@ export class Scraper {
     this.context = null;
     this.page = null;
     this.pollTimer = null;
+    this.watchdogTimer = null;        // حارس ذاتي الاستشفاء (يعمل دائماً)
+    this.restartAttempts = 0;         // لتأخير أسي/exponential backoff
     this.seen = new Set();             // hashes للرسائل المُعالَجة
     this._loadSeen();
     this._activeSelectors = {
@@ -159,9 +161,11 @@ export class Scraper {
       );
       if (!shell) {
         // لا نرمي خطأ — نُبقي المتصفّح مفتوحاً ليرى المستخدم QR عبر /screenshot
+        // ونُشغّل الـ watchdog ليلتقط لحظة اكتمال الإقران تلقائياً.
         this.state = 'session_expired';
         this.lastError = 'pairing_timeout';
         log.warn('start', 'pairing_timeout — browser kept open for manual QR via UI');
+        this._startWatchdog();
         return { ok: false, state: this.state, hint: 'open /screenshot to scan QR' };
       }
       this._activeSelectors.list_shell = shell.selector;
@@ -184,7 +188,9 @@ export class Scraper {
       await this._bootstrap();
 
       this.state = 'running';
+      this.restartAttempts = 0;
       this._scheduleNextPoll();
+      this._startWatchdog();
       log.info('start', 'running');
       return { ok: true, state: this.state, selectors: this._activeSelectors };
     } catch (err) {
@@ -192,6 +198,8 @@ export class Scraper {
       if (this.state !== 'session_expired') this.state = 'error';
       log.error('start', 'failed', err.message);
       // لا نُغلق المتصفّح كي يتمكّن المستخدم من رؤية الحالة (مفيد محلياً).
+      // بدلاً من ترك الحالة ميّتة تشغّل الـ watchdog ليحاول الاسترداد.
+      this._startWatchdog();
       throw err;
     }
   }
@@ -200,6 +208,8 @@ export class Scraper {
     log.info('stop', 'stopping');
     if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = null;
+    if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+    this.watchdogTimer = null;
     try {
       if (this.context) await this.context.close();
     } catch (e) {
@@ -209,6 +219,111 @@ export class Scraper {
     this.page = null;
     this.state = 'stopped';
     return { ok: true };
+  }
+
+  // ─── watchdog ذاتي الاستشفاء ────────────────────────────────
+  /**
+   * يعمل دائماً في الخلفية ليحلّ ثلاث حالات:
+   *  1) المستخدم أكمل الإقران من الواجهة والـ state مازال session_expired/pairing.
+   *  2) المتصفّح/الصفحة ماتوا (Target crashed, OOM, جلسة انتهت ليلاً).
+   *  3) Google عرض صفحة اعادة تحقّق دورية — لا نفعل شيئاً سوى الاستمرار بالاستطلاع.
+   */
+  _startWatchdog() {
+    if (this.watchdogTimer) return; // كائن بالفعل
+    const TICK = 8000;
+    const fire = async () => {
+      try {
+        await this._watchdogTick();
+      } catch (e) {
+        log.warn('watchdog', 'tick error', e.message);
+      } finally {
+        // أعد الجدولة دائماً بشرط ألا تكون في stopped
+        if (this.state !== 'stopped') {
+          this.watchdogTimer = setTimeout(fire, TICK);
+        } else {
+          this.watchdogTimer = null;
+        }
+      }
+    };
+    this.watchdogTimer = setTimeout(fire, TICK);
+    log.info('watchdog', 'started');
+  }
+
+  async _watchdogTick() {
+    // 1) السياق أو الصفحة ماتا → إعادة تشغيل كاملة
+    const dead = !this.context || !this.page || this.page.isClosed?.();
+    if (dead && !['idle', 'starting', 'stopped'].includes(this.state)) {
+      this.restartAttempts = Math.min(this.restartAttempts + 1, 6);
+      const delaySec = Math.min(60, 5 * 2 ** (this.restartAttempts - 1)); // 5,10,20,40,60,60s
+      log.warn('watchdog', `page/context dead — scheduling restart in ${delaySec}s (attempt ${this.restartAttempts})`);
+      this.state = 'error';
+      this.lastError = 'page_or_context_dead';
+      setTimeout(() => {
+        // جرّب إعادة التشغيل بنفس مجلد البروفايل (الجلسة محفوظة)
+        this.context = null; this.page = null;
+        this.state = 'idle';
+        this.start().catch((e) => log.warn('watchdog', 'restart failed', e.message));
+      }, delaySec * 1000);
+      return;
+    }
+    if (dead) return;
+
+    // 2) لو كنّا في session_expired أو pairing أو error… تحقّق إن كان الإقران اكتمل
+    if (['session_expired', 'pairing', 'error'].includes(this.state)) {
+      const recovered = await this._tryRecoverPairing();
+      if (recovered) {
+        log.info('watchdog', 'pairing detected as completed — transitioning to running');
+        this.restartAttempts = 0;
+      }
+    }
+  }
+
+  /**
+   * يتحقّق إن كانت قائمة المحادثات (shell) ظاهرة. إن نعم— يفتح المحادثة
+   * ويعيد الحالة إلى running دون إعادة تشغيل المتصفّح.
+   * تُستخدم من الـ watchdog ومن endpoint /recheck.
+   */
+  async recheckPairing() {
+    return await this._tryRecoverPairing();
+  }
+
+  async _tryRecoverPairing() {
+    if (!this.page || this.page.isClosed?.()) return false;
+    // إن كنّا في صفحة welcome/qr/auth — لا نحاول (المستخدم لم يكمل بعد)
+    const url = this.page.url();
+    if (/\/(welcome|authentication)|qr/i.test(url)) {
+      // جرّب تجاوز welcome
+      await this._dismissWelcomeIfPresent().catch(() => {});
+    }
+    // ابحث عن أي مرشّح لـ shell
+    let shellSel = null;
+    for (const sel of LIST_SHELL_CANDIDATES) {
+      const c = await this.page.locator(sel).count().catch(() => 0);
+      if (c > 0) { shellSel = sel; break; }
+    }
+    if (!shellSel) return false;
+
+    log.info('recover', `shell selector found: ${shellSel} — entering opening_chat`);
+    this._activeSelectors.list_shell = shellSel;
+    this.state = 'opening_chat';
+    this.lastError = null;
+    try {
+      // ابحث عن list_item
+      const item = await this._waitForAnySelector(LIST_ITEM_CANDIDATES, 30_000, 'recover-items');
+      if (!item) throw new Error('list_items_not_found_on_recover');
+      this._activeSelectors.list_item = item.selector;
+      await this._openTargetConversation();
+      await this._bootstrap();
+      this.state = 'running';
+      this._scheduleNextPoll();
+      log.info('recover', 'transitioned to running');
+      return true;
+    } catch (e) {
+      log.warn('recover', 'failed to open chat after pairing', e.message);
+      this.state = 'session_expired';
+      this.lastError = `recover_failed:${e.message}`;
+      return false;
+    }
   }
 
   /** يلتقط لقطة شاشة لصفحة Chromium الحالية. يُستخدم لعرض QR في الواجهة. */
@@ -412,9 +527,10 @@ export class Scraper {
       // ربما تنقّلنا أو الجلسة انتهت
       const url = this.page.url();
       if (/authentication|qr/i.test(url)) {
-        log.warn('session', 'session_expired (qr page)');
+        log.warn('session', 'session_expired (qr page) — watchdog will recover automatically');
         this.state = 'session_expired';
-        return; // لا polling حتى إعادة الإقران
+        this._startWatchdog(); // في حال ما كان يعمل
+        return;
       }
       // نحاول إعادة فتح المحادثة
       try {

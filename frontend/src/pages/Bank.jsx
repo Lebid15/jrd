@@ -86,6 +86,20 @@ export default function Bank() {
     }
   }, []);
 
+  // زر "تحديث الحالة" — يستدعي /recheck (إن اكتمل الإقران من الواجهة الحيّة
+  // ينتقل لـ running فوراً) ثم يجلب الـ status. لا يُظهر تحذير عند الفشل.
+  const recheckGmsg = useCallback(async () => {
+    try {
+      const r = await api.post('/internal/bank-message/recheck');
+      if (r.data?.recovered) {
+        toast.success('تمّ كشف اكتمال الإقران — يعمل الآن');
+      }
+    } catch {
+      /* تجاهل — نُكمل بجلب الحالة */
+    }
+    await loadGmsgStatus();
+  }, [loadGmsgStatus]);
+
   useEffect(() => {
     loadGmsgStatus();
     const id = setInterval(loadGmsgStatus, 15000);
@@ -223,7 +237,7 @@ export default function Bank() {
         sessionInfo={gmsgSessionInfo}
         busy={gmsgBusy}
         onStart={startGmsg}
-        onReload={loadGmsgStatus}
+        onReload={recheckGmsg}
         onUploadSession={uploadGmsgSession}
         uploadBusy={gmsgUploadBusy}
         uploadProgress={gmsgUploadProgress}

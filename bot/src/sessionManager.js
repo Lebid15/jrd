@@ -53,4 +53,23 @@ export async function bootstrap() {
   for (const tenantId of folders) {
     await startSession(tenantId);
   }
+
+  // health-check دوري: يستيقظ كل دقيقة ويُعيد تشغيل أي جلسة عالقة في idle.
+  // يحلّ مشكلة توقّف الجلسات ليلاً بعد فشل reconnect متكرّر أو خطأ في start().
+  // الجلسات المُسجَّل خروجها عمداً (state='closed') لا تُلمس.
+  setInterval(async () => {
+    for (const session of sessions.values()) {
+      try {
+        if (session.state === 'idle') {
+          logger.warn({ tenant: session.tenantId }, 'health-check: idle session — restarting');
+          await session.start({ force: true }).catch(err =>
+            logger.error({ tenant: session.tenantId, err: err.message }, 'health-check restart failed')
+          );
+        }
+      } catch (e) {
+        logger.error({ tenant: session.tenantId, err: e.message }, 'health-check error');
+      }
+    }
+  }, 60_000);
+  logger.info('Bot health-check started (every 60s)');
 }

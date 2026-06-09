@@ -716,6 +716,26 @@ router.post('/bank-message/start', async (req, res) => {
 });
 
 /**
+ * POST /api/internal/bank-message/recheck
+ * فحص فوري: هل اكتمل الإقران (قائمة المحادثات ظاهرة)؟ إن نعم — انتقل لـ running
+ * بدون إعادة تشغيل المتصفّح. زر "تحديث الحالة" يستدعيه.
+ */
+router.post('/bank-message/recheck', async (req, res) => {
+  const url = process.env.GMSG_SCRAPER_URL || 'http://127.0.0.1:3101';
+  const key = process.env.INTERNAL_API_KEY || '';
+  try {
+    const r = await fetch(`${url}/recheck`, {
+      method: 'POST',
+      headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
+    });
+    const data = await r.json().catch(() => ({}));
+    res.status(r.status).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.code || e.message });
+  }
+});
+
+/**
  * GET /api/internal/bank-message/debug-page
  * يعيد URL/title/body من Chromium الحالي للتشخيص.
  */
