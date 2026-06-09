@@ -405,6 +405,9 @@ export default function Dashboard() {
             <p className={`text-2xl md:text-4xl font-bold ${profit < 0 ? 'text-red-200' : ''}`}>
               ${formatNumber(profit)}
             </p>
+            <p className={`text-lg md:text-2xl font-semibold mt-1 ${profit < 0 ? 'text-red-200' : 'text-emerald-50'}`}>
+              ₺{formatNumber(profit * exchangeRate)}
+            </p>
             {lastInventory && (
               <p className="text-emerald-200 text-xs mt-2">
                 آخر جرد: {lastInventory.date}
