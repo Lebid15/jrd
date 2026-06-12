@@ -1,4 +1,4 @@
-# خطة العمل — المرحلة القادمة (plan2)
+﻿# خطة العمل — المرحلة القادمة (plan2)
 
 > ملف نقاش وتخطيط. القرارات تُسجَّل هنا قبل أي كود.
 > المرجع التاريخي: [plan.md](plan.md).
@@ -824,3 +824,341 @@ docker compose -f deploy/docker-compose.yml up -d app
 ---
 
 > **ابتداءً من هذه النقطة**، أبدأ المرحلة 1 (ملفات النشر في `deploy/`) ثم المرحلة 2 (إعداد الخادم) ثم باقي المراحل بالترتيب.
+
+---
+---
+
+# الجزء 13: التنفيذ الفعلي على Hetzner (2026-06-12)
+
+> هذا القسم يوثّق ما تم تنفيذه فعلياً بعد كتابة الخطة، مع كل الأوامر والملفات الجديدة والحلول للمشاكل التي ظهرت.
+
+## 13.1) إنشاء السيرفر على Hetzner Cloud
+
+- **اسم الخادم**: `jrd-prod`
+- **النوع**: CCX (8 GB RAM، Dedicated vCPU)
+- **النظام**: Ubuntu 24.04 LTS
+- **الموقع**: Falkenstein, Germany (FSN1)
+- **IP**: `167.233.124.62`
+- **كلمة سرّ root**: `cXnLKrrJPiFq` (تعمل فقط في Hetzner Console KVM)
+- **SSH**: لا يقبل كلمة المرور — مفاتيح فقط
+
+### تركيب SSH key من سطح المكتب
+
+- **اسم المفتاح**: `~/.ssh/jrd_hetzner_desktop` / `jrd_hetzner_desktop.pub`
+- **النوع**: ed25519
+- **Fingerprint**: `SHA256:PZll0VaENSeBCR3YLy5VdbYraztT7ZGcjJTBIGk/3I8`
+
+#### المشكلة 1: لصق المفتاح في Hetzner Console يفسد الأحرف
+Hetzner Console استبدلت `_` بـ `-` و `0` بـ `O`، فلم يُقبل المفتاح.
+
+#### الحل: دفع المفتاح عبر git pull
+ملف جديد: `deploy/keys/desktop.pub`
+
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINjmT9Lrh0cbzacmLJ4D5l1yDeaM15nvc8ZvXh/t3YvU jrd-hetzner-desktop
+```
+
+ثم على الخادم (عبر Console):
+
+```bash
+cd /srv/jrd/app && git pull
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+cp deploy/keys/desktop.pub /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+```
+
+#### المشكلة 2: `/etc/ssh/sshd_config` مفقود
+الخادم بدون `sshd_config` (الموجود فقط `/usr/share/openssh/sshd_config`).
+
+#### الحل: سكربت `deploy/keys/fix-ssh.sh`
+
+```bash
+#!/usr/bin/env bash
+set -e
+[ -f /etc/ssh/sshd_config ] || cp /usr/share/openssh/sshd_config /etc/ssh/sshd_config
+mkdir -p /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/00-jrd-root-key.conf <<EOF
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PasswordAuthentication no
+EOF
+sshd -t && systemctl restart ssh
+```
+
+بعد ذلك SSH يعمل من سطح المكتب:
+
+```powershell
+ssh -i $HOME\.ssh\jrd_hetzner_desktop -o IdentitiesOnly=yes root@167.233.124.62
+```
+
+---
+
+## 13.2) نشر Docker stack
+
+### نسخ المشروع وبناء الصور
+
+```bash
+mkdir -p /srv/jrd
+cd /srv/jrd
+git clone https://github.com/Lebid15/jrd.git app
+cd app/deploy
+cp .env.example .env
+# توليد الأسرار
+sed -i "s|^INTERNAL_API_KEY=.*|INTERNAL_API_KEY=$(openssl rand -hex 32)|" .env
+sed -i "s|^BOT_ENCRYPTION_KEY=.*|BOT_ENCRYPTION_KEY=$(openssl rand -hex 32)|" .env
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
+sed -i "s|^SMS_WEBHOOK_SECRET=.*|SMS_WEBHOOK_SECRET=$(openssl rand -hex 32)|" .env
+chmod 600 .env
+docker compose up -d --build
+```
+
+### الحاويات الجارية
+
+- **`jrd-app`**: العقدة الرئيسية، تستمع على 3001 داخلياً.
+- **`jrd-caddy`**: reverse proxy، يستمع 80/443، شهادة Let's Encrypt تلقائياً.
+
+### تعديل النطاق
+
+`deploy/Caddyfile` تم تغييره من `new.ahlacard.net` إلى `alaya.ahlacard.net`.
+
+### تعديل `deploy/.env.example`
+
+`WEBHOOK_BASE_URL` تم تحديثه إلى `https://alaya.ahlacard.net`.
+
+---
+
+## 13.3) DNS على Cloudflare
+
+| Record | Type | Value | Proxy |
+|--------|------|-------|-------|
+| `alaya.ahlacard.net` | A | `167.233.124.62` | DNS only (رمادي) |
+| `ahlacard.net` | CNAME | `3j5ti2rp.up.railway.app` | (لا يزال Railway) |
+
+> Proxy رمادي وليس برتقالي، لكي يحصل Caddy على شهادة Let's Encrypt مباشرة.
+
+شهادة HTTPS صدرت تلقائياً من Caddy + Let's Encrypt على `alaya.ahlacard.net`.
+
+---
+
+## 13.4) إنشاء المسؤول الأول (admin)
+
+استخدمنا السكربت الموجود `backend/scripts/create-admin.js`:
+
+```bash
+ssh -i ~/.ssh/jrd_hetzner_desktop root@167.233.124.62 \
+  "docker exec jrd-app node backend/scripts/create-admin.js \
+   --email=lebid.hac.alaye@gmail.com --password='Asdf1212asdf!!'"
+```
+
+النتيجة:
+- `id=1`, `role=admin`, `tenant_id=NULL`
+- البريد: `lebid.hac.alaye@gmail.com`
+- كلمة السرّ: `Asdf1212asdf!!`
+
+### ملاحظة عن واجهة الأدمن
+الأدمن يدخل من نفس صفحة `/login` ثم ينتقل إلى `/admin/tenants`. أي صفحة أخرى تُعيد 400 لأن المسارات تتطلب `tenant_id` (وهو `NULL` للأدمن) — هذا متوقّع.
+
+---
+
+## 13.5) إنشاء أول مستأجر (ziyad)
+
+من واجهة `/admin/tenants` كأدمن:
+
+- **اسم المستأجر**: `ziyad`
+- **Slug**: `ziyad`
+- **`tenant_id`**: `2`
+- **المالك**: `Zeyadmo.Business@gmail.com` / `7766Alaya`
+
+تم التحقق من تسجيل الدخول كمالك بنجاح.
+
+---
+
+## 13.6) ترحيل بيانات Railway إلى مستأجر زياد
+
+### المشكلة
+Railway CLI غير مُثبّت محلياً، وكل خدمات الرفع المجانية (file.io, transfer.sh, 0x0.st, bashupload) لم تعمل.
+
+### الحل: استخدام واجهة Railway HTTP نفسها كقناة نقل
+الخدمة تخدم `/uploads` بشكل عام بدون مصادقة، فاستعملناها كقناة نقل مؤقتة.
+
+#### في Railway Console
+
+```bash
+# 1) نسخة نظيفة من DB (تدمج WAL)
+cd /app/backend && node -e "
+const D=require('better-sqlite3');
+const s=new D('/app/backend/data/jrd.db',{readonly:true});
+s.exec(\"VACUUM INTO '/tmp/jrd-railway.db'\");
+console.log('OK', require('fs').statSync('/tmp/jrd-railway.db').size);
+"
+
+# 2) ضع الملف في /uploads ليكون متاحاً عبر HTTP
+cp /tmp/jrd-railway.db /app/backend/data/uploads/jrd-railway.db
+```
+
+#### على Hetzner
+
+```bash
+mkdir -p /srv/jrd/migration
+curl -fsSL https://ahlacard.net/uploads/jrd-railway.db -o /srv/jrd/migration/jrd-railway.db
+sha256sum /srv/jrd/migration/jrd-railway.db
+# 834b47d8788d71ea01803a2be7bcf0ecf19e902091d12cc61075b141625e3a37
+```
+
+### اكتشاف مهم
+قاعدة Railway كانت **مُحدَّثة بالفعل** بـ multi-tenant schema (كل الجداول فيها عمود `tenant_id` بقيمة `1`). الخطّة الأصلية افترضت schema قديم بدون tenant_id، لكن الواقع أبسط: مجرد نسخ الصفوف وتحويل `tenant_id` من `1` إلى `2`.
+
+### ملف جديد: `backend/scripts/migrate-railway-to-tenant.js`
+
+- يستخدم `better-sqlite3` لفتح المصدر (read-only) والهدف (عبر `database.js` الحالي).
+- ينسخ كل الجداول الـ 13 (items, current_values, api_configs, inventories, inventory_items, monthly_inventories, monthly_inventory_items, photos, settings, bank_transactions, bank_sms_log, whatsapp_messages, whatsapp_transactions).
+- يحوّل `tenant_id = 1 → target`.
+- يحافظ على الـ IDs الأصلية، ويحدّث `sqlite_sequence` للجداول AUTOINCREMENT.
+- يستخدم `INSERT OR REPLACE` لجدول `settings` (مفتاح مركّب `tenant_id+key`).
+- يدعم `--dry-run` (يعمل كل شيء في transaction ثم rollback).
+- كل العملية داخل transaction واحدة — أي خطأ → rollback كامل.
+
+### ملف مساعد: `backend/scripts/list-tenants.js`
+يعرض كل المستأجرين والمستخدمين من DB الحيّة عبر `better-sqlite3` (لأن WAL لا يُقرأ بـ `sqlite3` CLI أثناء عمل التطبيق).
+
+### ملف مساعد: `deploy/inspect-railway-db.sh`
+يعرض schemas وعدد صفوف كل جدول من نسخة Railway.
+
+### خطوات النقل الفعلية
+
+```bash
+# 1) backup
+cp /srv/jrd/data/jrd.db     /srv/jrd/data/jrd.db.pre-migration-$(date +%s)
+cp /srv/jrd/data/jrd.db-wal /srv/jrd/data/jrd.db-wal.pre-migration-$(date +%s)
+
+# 2) نسخ السكربت والـ DB داخل الحاوية
+docker cp /srv/jrd/app/backend/scripts/migrate-railway-to-tenant.js \
+          jrd-app:/app/backend/scripts/migrate-railway-to-tenant.js
+docker exec jrd-app mkdir -p /data/migration
+docker cp /srv/jrd/migration/jrd-railway.db jrd-app:/data/migration/jrd-railway.db
+
+# 3) dry-run
+docker exec jrd-app node backend/scripts/migrate-railway-to-tenant.js \
+  --source=/data/migration/jrd-railway.db --target-tenant=2 --dry-run
+
+# 4) النقل الفعلي
+docker exec jrd-app node backend/scripts/migrate-railway-to-tenant.js \
+  --source=/data/migration/jrd-railway.db --target-tenant=2
+```
+
+### نتيجة النقل (10,170 صف)
+
+| Table | Rows |
+|-------|-----:|
+| items | 50 |
+| current_values | 50 |
+| api_configs | 13 |
+| inventories | 29 |
+| inventory_items | 673 |
+| monthly_inventories | 2 |
+| monthly_inventory_items | 40 |
+| photos | 1 |
+| settings | 9 |
+| bank_transactions | 48 |
+| bank_sms_log | 9,115 |
+| whatsapp_messages | 106 |
+| whatsapp_transactions | 34 |
+| **المجموع** | **10,170** |
+
+المستأجر زياد يرى الآن كل بياناته القديمة من Railway على `https://alaya.ahlacard.net`.
+
+---
+
+## 13.7) الحلول التقنية المُكتشفة
+
+### المشكلة: `sqlite3` CLI داخل الحاوية يقرأ DB فارغة
+الحاوية لا تحوي `sqlite3`. و WAL يحفظ كل الكتابات الحديثة، فلا تظهر في `sqlite3` CLI من على الـ host.
+
+### الحل
+استعمال `node -e` مع `better-sqlite3` الموجود فعلاً في الحاوية، أو `VACUUM INTO` لإنشاء نسخة نظيفة.
+
+### المشكلة: PowerShell يفسد الأوامر المُرسلة عبر SSH
+PowerShell يوسّع `$()` و `$variable` محلياً قبل إرسالها، وعلامات الاقتباس المُختلطة تنكسر.
+
+### الحل
+- استخدام single-quoted strings في PowerShell عند إرسال أوامر معقدة عبر SSH.
+- كتابة سكربتات `.sh` و `.js` ودفعها عبر `git pull` بدلاً من سطر-أوامر طويل.
+- `scp` للملفات المعقّدة بدل eval.
+
+---
+
+## 13.8) الملفات الجديدة في هذه الجلسة
+
+| الملف | الغرض |
+|------|------|
+| `deploy/keys/desktop.pub` | Public key لسطح المكتب |
+| `deploy/keys/fix-ssh.sh` | إصلاح `sshd_config` المفقود |
+| `deploy/inspect-railway-db.sh` | فحص schema وعدد صفوف Railway DB |
+| `backend/scripts/list-tenants.js` | قائمة المستأجرين والمستخدمين من DB الحيّة |
+| `backend/scripts/migrate-railway-to-tenant.js` | السكربت الرئيسي لنقل بيانات Railway |
+
+## 13.9) الملفات المُعدّلة
+
+| الملف | التغيير |
+|------|--------|
+| `deploy/Caddyfile` | `new.ahlacard.net` → `alaya.ahlacard.net` |
+| `deploy/.env.example` | `WEBHOOK_BASE_URL` → alaya |
+| `info.md` | تحديث بيانات Hetzner + بيانات الأدمن |
+
+---
+
+## 13.10) حالة الإنتاج الحالية (نهاية الجلسة)
+
+### يعمل
+- `https://alaya.ahlacard.net` على Hetzner مع HTTPS.
+- admin: `lebid.hac.alaye@gmail.com` / `Asdf1212asdf!!`.
+- owner زياد: `Zeyadmo.Business@gmail.com` / `7766Alaya` — يرى بياناته القديمة.
+- النسخة الاحتياطية للـ DB قبل النقل: `/srv/jrd/data/jrd.db.pre-migration-*`.
+
+### Railway لا يزال يعمل
+- `https://ahlacard.net` (CNAME → Railway) ولم يُغلق بعد.
+- GitHub auto-deploy على Railway: **مُعطّل**.
+- **لا تضغط زر `Deploy` في Railway dashboard** — يوجد تغيير معلّق سيُحدّثه للكود الجديد ويخرّب DB القديمة.
+
+### المتبقّي
+
+1. **DNS cutover**: تحويل `ahlacard.net` من Railway إلى Hetzner.
+2. **Cron backup**: جدولة نسخ احتياطي يومي/ساعي خارج الخادم.
+3. **نقل صور uploads**: ملف واحد `1e9fcc47-2041-4eb2-9d0b-658d8a254fbe.png` (`mlogo10.png`) من Railway → Hetzner.
+4. **إيقاف Railway**: بعد التأكد من استقرار Hetzner لعدة أيام.
+
+---
+
+## 13.11) أوامر تشغيلية مرجعية
+
+### الاتصال
+
+```powershell
+ssh -i $HOME\.ssh\jrd_hetzner_desktop -o IdentitiesOnly=yes root@167.233.124.62
+```
+
+### حالة الحاويات
+
+```bash
+cd /srv/jrd/app/deploy && docker compose ps
+docker compose logs -f --tail=100
+```
+
+### تحديث الكود
+
+```bash
+cd /srv/jrd/app && git pull && cd deploy && docker compose up -d --build
+```
+
+### نسخة احتياطية يدوية
+
+```bash
+cp /srv/jrd/data/jrd.db /srv/jrd/data/backups/jrd.db.$(date +%Y%m%d-%H%M%S)
+```
+
+### قائمة المستأجرين
+
+```bash
+docker cp /srv/jrd/app/backend/scripts/list-tenants.js jrd-app:/app/backend/scripts/list-tenants.js
+docker exec jrd-app node backend/scripts/list-tenants.js
+```
