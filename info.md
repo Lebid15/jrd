@@ -7,7 +7,25 @@
 ## الحالة الحالية (Migration)
 
 - **Railway**: ما زال يعمل بآخر نسخة منشورة — **GitHub auto-deploy معطَّل** (الـ branch `main` مفصول من إعدادات Railway). أي push جديد لن يؤثّر على Railway.
-- **Hetzner**: تمّ إنشاء سيرفر جديد، البنية التحتية جاهزة، لم يُنشَر التطبيق بعد.
+- **Hetzner**: ✅ تمّ النشر بنجاح على <https://alaya.ahlacard.net> (شهادة Let's Encrypt صحيحة). تمّ إنشاء أوّل admin. جاهز للاختبار وإنشاء المستأجرين.
+- **الخطوة التالية**: اختبار شامل على Hetzner ثم نقل بيانات Railway ثم تبديل DNS لـ `ahlacard.net`.
+
+---
+
+## لوحة الإدارة (Hetzner / alaya.ahlacard.net)
+
+| الحقل | القيمة |
+|------|--------|
+| URL | <https://alaya.ahlacard.net/login> |
+| بريد admin | `lebid.hac.alaye@gmail.com` |
+| كلمة admin | `Asdf1212asdf!!` |
+| دور | `admin` (يرى كل المستأجرين + واجهة إدارة) |
+
+### إعادة تعيين كلمة سرّ admin
+
+```powershell
+ssh -i $HOME\.ssh\jrd_hetzner_desktop root@167.233.124.62 "docker exec jrd-app node backend/scripts/create-admin.js --email=lebid.hac.alaye@gmail.com --password='NEW_PASS' --reset"
+```
 
 ---
 
@@ -27,11 +45,14 @@
 ### الدخول SSH
 
 ```powershell
-ssh root@167.233.124.62
+ssh -i $HOME\.ssh\jrd_hetzner_desktop root@167.233.124.62
 ```
 
-- المفتاح: `$HOME\.ssh\id_ed25519` (تم توليده على جهاز التطوير، اسمه في Hetzner = `dev-laptop`).
-- لا يوجد passphrase (مطلوب لتشغيل GitHub Actions مستقبلاً).
+- مفتاح اللابتوب: `~/.ssh/jrd_hetzner` (بدون passphrase)
+- مفتاح المكتبي: `~/.ssh/jrd_hetzner_desktop` (بدون passphrase)
+- المفتاح العام للمكتبي محفوظ في [deploy/keys/desktop.pub](deploy/keys/desktop.pub) (يُسحب تلقائياً على الخادم عبر git pull).
+- سكربت إصلاح SSH: [deploy/keys/fix-ssh.sh](deploy/keys/fix-ssh.sh) — يعيد بناء `sshd_config` ويصلح الصلاحيات لو تلفت.
+- لو نسيت كلمة سرّ root: لوحة Hetzner Cloud → Server → Rescue → Reset root password (أو Console KVM للتعديل اليدوي).
 
 ### البنية التحتية الجاهزة على السيرفر
 
