@@ -6,10 +6,29 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import db from '../database.js';
+import { DEFAULT_TENANT_ID } from '../database.js';
 import { parseMessage, computeDelta, isAdminName } from '../whatsappParser.js';
 import { parseSms } from './bank.js';
 
 const router = Router();
+
+/**
+ * tenant resolution داخل /api/internal:
+ *  - owner مسجّل دخول (cookie) → دائماً يستخدم tenant_id من token (لا يمكن تجاوزه من body/query).
+ *  - admin (cookie) أو خدمة داخلية (X-Internal-Api-Key) → يقرأ من body.tenant_id / query.tenant_id.
+ *  - افتراضياً: 1 (DEFAULT_TENANT_ID).
+ */
+function tidFrom(reqOrObj) {
+  // 1) owner: دائماً من token، لا يمكن تجاوزه
+  if (reqOrObj?.user?.role === 'owner' && reqOrObj?.user?.tenant_id) {
+    return reqOrObj.user.tenant_id;
+  }
+  // 2) admin / internal: من body أو query
+  const raw = reqOrObj?.body?.tenant_id ?? reqOrObj?.query?.tenant_id ?? reqOrObj?.tenant_id;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n > 0) return n;
+  return DEFAULT_TENANT_ID;
+}
 
 // ─── Auth middleware (X-Internal-Api-Key) — للبوت فقط ───────────────────────
 function internalAuth(req, res, next) {
@@ -33,8 +52,8 @@ function normalizeName(s) {
   return String(s || '').trim().toLowerCase();
 }
 
-function getAllowedGroups() {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(ALLOWED_GROUPS_KEY);
+function getAllowedGroups(tenantId = DEFAULT_TENANT_ID) {
+  const row = db.prepare('SELECT value FROM settings WHERE tenant_id = ? AND key = ?').get(tenantId, ALLOWED_GROUPS_KEY);
   if (!row) return [];
   try {
     const arr = JSON.parse(row.value);
@@ -44,8 +63,8 @@ function getAllowedGroups() {
   }
 }
 
-function isGroupAllowed(groupName) {
-  const list = getAllowedGroups();
+function isGroupAllowed(groupName, tenantId = DEFAULT_TENANT_ID) {
+  const list = getAllowedGroups(tenantId);
   if (list.length === 0) return false; // قائمة فارغة = لا شيء مسموح (افتراضي آمن)
   const n = normalizeName(groupName);
   if (!n) return false;
@@ -61,10 +80,10 @@ const KW_KEYS = {
   ignore: 'whatsapp_kw_ignore',
 };
 
-function getKeywords() {
+function getKeywords(tenantId = DEFAULT_TENANT_ID) {
   const out = { us: [], them: [], try: [], usd: [], ignore: [] };
   for (const [k, key] of Object.entries(KW_KEYS)) {
-    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    const row = db.prepare('SELECT value FROM settings WHERE tenant_id = ? AND key = ?').get(tenantId, key);
     if (row) {
       try {
         const arr = JSON.parse(row.value);
@@ -75,21 +94,21 @@ function getKeywords() {
   return out;
 }
 
-function getAdminToken() {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('whatsapp_admin_token');
+function getAdminToken(tenantId = DEFAULT_TENANT_ID) {
+  const row = db.prepare('SELECT value FROM settings WHERE tenant_id = ? AND key = ?').get(tenantId, 'whatsapp_admin_token');
   return row?.value || 'admin';
 }
 
 // ─── يبحث عن أوّل بند مربوط بمجموعة (بالاسم) ─────────────────────────────────
-function findItemByGroupName(groupName) {
+function findItemByGroupName(groupName, tenantId = DEFAULT_TENANT_ID) {
   const n = normalizeName(groupName);
   if (!n) return null;
   const rows = db.prepare(`
     SELECT ac.item_id, ac.whatsapp_group_name, i.name as item_name
     FROM api_configs ac
-    JOIN items i ON i.id = ac.item_id
-    WHERE ac.provider_type = 'whatsapp_group' AND i.is_active = 1
-  `).all();
+    JOIN items i ON i.id = ac.item_id AND i.tenant_id = ac.tenant_id
+    WHERE ac.provider_type = 'whatsapp_group' AND i.is_active = 1 AND ac.tenant_id = ?
+  `).all(tenantId);
   for (const r of rows) {
     if (normalizeName(r.whatsapp_group_name) === n) return r;
   }
@@ -101,9 +120,11 @@ router.post('/ingest', internalAuth, (req, res) => {
   const { tenant_id, group_id, group_name, sender, sender_name, message_id, text, is_group } = req.body;
   if (!text || !group_id) return res.status(400).json({ error: 'text and group_id required' });
 
+  const tId = Number.isInteger(Number(tenant_id)) && Number(tenant_id) > 0 ? Number(tenant_id) : DEFAULT_TENANT_ID;
+
   const log = (decision, extra = {}) => {
     console.log('[ingest]', JSON.stringify({
-      group_name, sender_name, text: text.slice(0, 80), decision, ...extra,
+      tenant_id: tId, group_name, sender_name, text: text.slice(0, 80), decision, ...extra,
     }));
   };
 
@@ -112,8 +133,8 @@ router.post('/ingest', internalAuth, (req, res) => {
     log('skipped_not_group');
     return res.json({ ok: true, filtered: true, reason: 'not_group' });
   }
-  if (!isGroupAllowed(group_name)) {
-    log('skipped_group_not_allowed', { allowed_list: getAllowedGroups() });
+  if (!isGroupAllowed(group_name, tId)) {
+    log('skipped_group_not_allowed', { allowed_list: getAllowedGroups(tId) });
     return res.json({ ok: true, filtered: true, reason: 'group_not_in_allowed_list' });
   }
 
@@ -123,7 +144,7 @@ router.post('/ingest', internalAuth, (req, res) => {
       (tenant_id, group_id, group_name, sender, sender_name, message_id, text, is_group)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    tenant_id || '1',
+    tId,
     group_id,
     group_name || null,
     sender || null,
@@ -138,14 +159,14 @@ router.post('/ingest', internalAuth, (req, res) => {
   const dbMessageId = info.lastInsertRowid;
 
   // 2) محاولة ربط المجموعة ببند (whatsapp_group provider)
-  const link = findItemByGroupName(group_name);
+  const link = findItemByGroupName(group_name, tId);
   if (!link) {
     log('no_item_linked');
     return res.json({ ok: true, no_item_linked: true });
   }
 
   // 3) تحليل النصّ
-  const parsed = parseMessage(text, getKeywords());
+  const parsed = parseMessage(text, getKeywords(tId));
   if (!parsed) {
     log('parse_failed_no_match');
     return res.json({ ok: true, parsed: null, applied: false });
@@ -156,32 +177,33 @@ router.post('/ingest', internalAuth, (req, res) => {
   }
 
   // 4) تحديد المصدر (us / them) من اسم المرسل
-  const adminToken = getAdminToken();
+  const adminToken = getAdminToken(tId);
   const source = isAdminName(sender_name, adminToken) ? 'us' : 'them';
 
   // 5) حساب الـ delta وتطبيقه على current_values
   const delta = computeDelta({ ...parsed, source });
   const field = parsed.currency === 'USD' ? 'usd_amount' : 'try_amount';
 
-  const cv = db.prepare('SELECT id, try_amount, usd_amount FROM current_values WHERE item_id = ?').get(link.item_id);
+  const cv = db.prepare('SELECT id, try_amount, usd_amount FROM current_values WHERE item_id = ? AND tenant_id = ?').get(link.item_id, tId);
   let balanceAfter;
   if (cv) {
     const current = parsed.currency === 'USD' ? (cv.usd_amount || 0) : (cv.try_amount || 0);
     balanceAfter = current + delta;
-    db.prepare(`UPDATE current_values SET ${field} = ? WHERE item_id = ?`)
-      .run(balanceAfter, link.item_id);
+    db.prepare(`UPDATE current_values SET ${field} = ? WHERE item_id = ? AND tenant_id = ?`)
+      .run(balanceAfter, link.item_id, tId);
   } else {
     balanceAfter = delta;
-    db.prepare(`INSERT INTO current_values (item_id, ${field}) VALUES (?, ?)`)
-      .run(link.item_id, balanceAfter);
+    db.prepare(`INSERT INTO current_values (tenant_id, item_id, ${field}) VALUES (?, ?, ?)`)
+      .run(tId, link.item_id, balanceAfter);
   }
 
   // 6) حفظ سجل العملية
   db.prepare(`
     INSERT INTO whatsapp_transactions
-      (item_id, message_id, source, direction, currency, amount, delta, balance_after, raw_text, sender_name)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (tenant_id, item_id, message_id, source, direction, currency, amount, delta, balance_after, raw_text, sender_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
+    tId,
     link.item_id,
     dbMessageId,
     source,
@@ -214,25 +236,26 @@ router.post('/ingest', internalAuth, (req, res) => {
  * اختبار محلّل الرسائل بدون حفظ. body: { text, sender_name?, group_name? }
  */
 router.post('/whatsapp/preview-parse', (req, res) => {
-  const { text, sender_name, group_name } = req.body || {};
+  const { text, sender_name, group_name, tenant_id } = req.body || {};
   if (!text) return res.status(400).json({ error: 'text required' });
-  const keywords = getKeywords();
+  const tId = Number.isInteger(Number(tenant_id)) && Number(tenant_id) > 0 ? Number(tenant_id) : DEFAULT_TENANT_ID;
+  const keywords = getKeywords(tId);
   const parsed = parseMessage(text, keywords);
-  const source = isAdminName(sender_name, getAdminToken()) ? 'us' : 'them';
+  const source = isAdminName(sender_name, getAdminToken(tId)) ? 'us' : 'them';
   const delta = parsed && !parsed.ignored ? computeDelta({ ...parsed, source }) : null;
-  const link = group_name ? findItemByGroupName(group_name) : null;
+  const link = group_name ? findItemByGroupName(group_name, tId) : null;
   res.json({
     text,
     sender_name: sender_name || null,
     group_name: group_name || null,
     keywords,
-    admin_token: getAdminToken(),
+    admin_token: getAdminToken(tId),
     parsed,
     source,
     delta,
     linked_item: link || null,
-    group_allowed: group_name ? isGroupAllowed(group_name) : null,
-    allowed_groups: getAllowedGroups(),
+    group_allowed: group_name ? isGroupAllowed(group_name, tId) : null,
+    allowed_groups: getAllowedGroups(tId),
   });
 });
 
@@ -241,7 +264,8 @@ router.post('/whatsapp/preview-parse', (req, res) => {
  * قائمة أسماء المجموعات المعتمدة
  */
 router.get('/whatsapp/allowed-groups', (req, res) => {
-  res.json({ groups: getAllowedGroups() });
+  const tId = tidFrom(req);
+  res.json({ groups: getAllowedGroups(tId) });
 });
 
 /**
@@ -249,13 +273,14 @@ router.get('/whatsapp/allowed-groups', (req, res) => {
  * body: { groups: ["اسم المجموعة 1", "اسم المجموعة 2"] }
  */
 router.put('/whatsapp/allowed-groups', (req, res) => {
+  const tId = tidFrom(req);
   const groups = Array.isArray(req.body?.groups) ? req.body.groups : null;
   if (!groups) return res.status(400).json({ error: 'groups array required' });
   const clean = groups.map(g => String(g || '').trim()).filter(Boolean);
   db.prepare(`
-    INSERT INTO settings (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(ALLOWED_GROUPS_KEY, JSON.stringify(clean));
+    INSERT INTO settings (tenant_id, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value
+  `).run(tId, ALLOWED_GROUPS_KEY, JSON.stringify(clean));
   res.json({ groups: clean });
 });
 
@@ -287,8 +312,9 @@ router.get('/whatsapp/health', async (req, res) => {
 router.get('/whatsapp/status', async (req, res) => {
   const botUrl = process.env.BOT_URL || 'http://localhost:3100';
   const key = process.env.INTERNAL_API_KEY || '';
+  const tId = tidFrom(req);
   try {
-    const r = await fetch(`${botUrl}/sessions/1`, {
+    const r = await fetch(`${botUrl}/sessions/${tId}`, {
       headers: { 'X-Internal-Api-Key': key },
     });
     if (r.status === 404) return res.json({ state: 'idle' });
@@ -308,9 +334,10 @@ router.get('/whatsapp/status', async (req, res) => {
 router.post('/whatsapp/start', async (req, res) => {
   const botUrl = process.env.BOT_URL || 'http://localhost:3100';
   const key = process.env.INTERNAL_API_KEY || '';
+  const tId = tidFrom(req);
   try {
     const force = req.query.force === '1';
-    const r = await fetch(`${botUrl}/sessions/1/start${force ? '?force=1' : ''}`, {
+    const r = await fetch(`${botUrl}/sessions/${tId}/start${force ? '?force=1' : ''}`, {
       method: 'POST',
       headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
     });
@@ -328,8 +355,9 @@ router.post('/whatsapp/start', async (req, res) => {
 router.post('/whatsapp/reset', async (req, res) => {
   const botUrl = process.env.BOT_URL || 'http://localhost:3100';
   const key = process.env.INTERNAL_API_KEY || '';
+  const tId = tidFrom(req);
   try {
-    const r = await fetch(`${botUrl}/sessions/1/reset`, {
+    const r = await fetch(`${botUrl}/sessions/${tId}/reset`, {
       method: 'POST',
       headers: { 'X-Internal-Api-Key': key, 'Content-Type': 'application/json' },
     });
@@ -346,8 +374,9 @@ router.post('/whatsapp/reset', async (req, res) => {
 router.post('/whatsapp/logout', async (req, res) => {
   const botUrl = process.env.BOT_URL || 'http://localhost:3100';
   const key = process.env.INTERNAL_API_KEY || '';
+  const tId = tidFrom(req);
   try {
-    await fetch(`${botUrl}/sessions/1/logout`, {
+    await fetch(`${botUrl}/sessions/${tId}/logout`, {
       method: 'POST',
       headers: { 'X-Internal-Api-Key': key },
     });
@@ -369,12 +398,13 @@ router.post('/whatsapp/logout', async (req, res) => {
  *  - عند تمرير `limit` فقط: يُرجع المصفوفة المسطّحة (للحفاظ على التوافق).
  */
 router.get('/whatsapp/messages', (req, res) => {
+  const tId = tidFrom(req);
   // التوافق الرجعي: لو `limit` مُمرَّر، يرجع المصفوفة كما كان
   if (req.query.limit && !req.query.page && !req.query.pageSize) {
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const rows = db.prepare(`
-      SELECT * FROM whatsapp_messages ORDER BY id DESC LIMIT ?
-    `).all(limit);
+      SELECT * FROM whatsapp_messages WHERE tenant_id = ? ORDER BY id DESC LIMIT ?
+    `).all(tId, limit);
     return res.json(rows);
   }
 
@@ -384,12 +414,12 @@ router.get('/whatsapp/messages', (req, res) => {
   const financialOnly = req.query.financial_only === '1' || req.query.financial_only === 'true';
   const q = String(req.query.q || '').trim();
 
-  const where = [];
-  const params = [];
+  const where = ['m.tenant_id = ?'];
+  const params = [tId];
 
   if (financialOnly) {
     // الرسائل المالية = التي لها سجلّ في whatsapp_transactions
-    where.push(`EXISTS (SELECT 1 FROM whatsapp_transactions t WHERE t.message_id = m.id)`);
+    where.push(`EXISTS (SELECT 1 FROM whatsapp_transactions t WHERE t.message_id = m.id AND t.tenant_id = m.tenant_id)`);
   }
 
   if (q) {
@@ -398,7 +428,7 @@ router.get('/whatsapp/messages', (req, res) => {
     params.push(like, like, like);
   }
 
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const whereSql = `WHERE ${where.join(' AND ')}`;
 
   const totalRow = db.prepare(`
     SELECT COUNT(*) as cnt FROM whatsapp_messages m ${whereSql}
@@ -417,8 +447,8 @@ router.get('/whatsapp/messages', (req, res) => {
       t.balance_after as tx_balance_after,
       i.name      as tx_item_name
     FROM whatsapp_messages m
-    LEFT JOIN whatsapp_transactions t ON t.message_id = m.id
-    LEFT JOIN items i ON i.id = t.item_id
+    LEFT JOIN whatsapp_transactions t ON t.message_id = m.id AND t.tenant_id = m.tenant_id
+    LEFT JOIN items i ON i.id = t.item_id AND i.tenant_id = m.tenant_id
     ${whereSql}
     ORDER BY m.id DESC
     LIMIT ? OFFSET ?
@@ -440,7 +470,8 @@ router.get('/whatsapp/messages', (req, res) => {
 router.delete('/whatsapp/messages/:id', (req, res) => {
   const id = parseInt(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
-  const info = db.prepare('DELETE FROM whatsapp_messages WHERE id = ?').run(id);
+  const tId = tidFrom(req);
+  const info = db.prepare('DELETE FROM whatsapp_messages WHERE id = ? AND tenant_id = ?').run(id, tId);
   res.json({ ok: true, deleted: info.changes });
 });
 
@@ -451,8 +482,9 @@ router.delete('/whatsapp/messages/:id', (req, res) => {
 router.post('/whatsapp/messages/delete-bulk', (req, res) => {
   const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(n => parseInt(n)).filter(Boolean) : [];
   if (!ids.length) return res.status(400).json({ error: 'ids array required' });
+  const tId = tidFrom(req);
   const placeholders = ids.map(() => '?').join(',');
-  const info = db.prepare(`DELETE FROM whatsapp_messages WHERE id IN (${placeholders})`).run(...ids);
+  const info = db.prepare(`DELETE FROM whatsapp_messages WHERE tenant_id = ? AND id IN (${placeholders})`).run(tId, ...ids);
   res.json({ ok: true, deleted: info.changes });
 });
 
@@ -461,13 +493,14 @@ router.post('/whatsapp/messages/delete-bulk', (req, res) => {
  * كل المجموعات التي وصلت منها رسائل (لاكتشاف الأسماء الصحيحة)
  */
 router.get('/whatsapp/groups', (req, res) => {
+  const tId = tidFrom(req);
   const rows = db.prepare(`
     SELECT group_name, group_id, COUNT(*) as msg_count, MAX(created_at) as last_at
     FROM whatsapp_messages
-    WHERE is_group = 1 AND group_name IS NOT NULL AND group_name != ''
+    WHERE tenant_id = ? AND is_group = 1 AND group_name IS NOT NULL AND group_name != ''
     GROUP BY group_name
     ORDER BY last_at DESC
-  `).all();
+  `).all(tId);
   res.json(rows);
 });
 
@@ -478,8 +511,9 @@ router.get('/whatsapp/groups', (req, res) => {
 router.get('/whatsapp/all-groups', async (req, res) => {
   const botUrl = process.env.BOT_URL || 'http://localhost:3100';
   const key = process.env.INTERNAL_API_KEY || '';
+  const tId = tidFrom(req);
   try {
-    const r = await fetch(`${botUrl}/sessions/1/groups`, {
+    const r = await fetch(`${botUrl}/sessions/${tId}/groups`, {
       headers: { 'X-Internal-Api-Key': key },
     });
     if (!r.ok) return res.json([]);
@@ -495,13 +529,15 @@ router.get('/whatsapp/all-groups', async (req, res) => {
  * كل قوائم الكلمات + الرمز الإداري (admin token)
  */
 router.get('/whatsapp/keywords', (req, res) => {
+  const tId = tidFrom(req);
+  const kw = getKeywords(tId);
   res.json({
-    us: getKeywords().us,
-    them: getKeywords().them,
-    try: getKeywords().try,
-    usd: getKeywords().usd,
-    ignore: getKeywords().ignore,
-    admin_token: getAdminToken(),
+    us: kw.us,
+    them: kw.them,
+    try: kw.try,
+    usd: kw.usd,
+    ignore: kw.ignore,
+    admin_token: getAdminToken(tId),
   });
 });
 
@@ -510,19 +546,20 @@ router.get('/whatsapp/keywords', (req, res) => {
  * body: { us:[], them:[], try:[], usd:[], ignore:[], admin_token:'admin' }
  */
 router.put('/whatsapp/keywords', (req, res) => {
+  const tId = tidFrom(req);
   const upsert = db.prepare(`
-    INSERT INTO settings (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    INSERT INTO settings (tenant_id, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value
   `);
   const cleanArr = (a) => Array.isArray(a) ? a.map(s => String(s || '').trim()).filter(Boolean) : null;
 
   const fields = { us: KW_KEYS.us, them: KW_KEYS.them, try: KW_KEYS.try, usd: KW_KEYS.usd, ignore: KW_KEYS.ignore };
   for (const [k, settingKey] of Object.entries(fields)) {
     const arr = cleanArr(req.body?.[k]);
-    if (arr) upsert.run(settingKey, JSON.stringify(arr));
+    if (arr) upsert.run(tId, settingKey, JSON.stringify(arr));
   }
   if (req.body?.admin_token && typeof req.body.admin_token === 'string') {
-    upsert.run('whatsapp_admin_token', req.body.admin_token.trim() || 'admin');
+    upsert.run(tId, 'whatsapp_admin_token', req.body.admin_token.trim() || 'admin');
   }
   res.json({ ok: true });
 });
@@ -532,20 +569,22 @@ router.put('/whatsapp/keywords', (req, res) => {
  * سجلّ العمليات المُحلَّلة لبند معيّن
  */
 router.get('/whatsapp/transactions', (req, res) => {
+  const tId = tidFrom(req);
   const limit = Math.min(parseInt(req.query.limit) || 50, 500);
   const itemId = req.query.item_id;
   let rows;
   if (itemId) {
     rows = db.prepare(`
-      SELECT * FROM whatsapp_transactions WHERE item_id = ?
+      SELECT * FROM whatsapp_transactions WHERE tenant_id = ? AND item_id = ?
       ORDER BY id DESC LIMIT ?
-    `).all(itemId, limit);
+    `).all(tId, itemId, limit);
   } else {
     rows = db.prepare(`
       SELECT t.*, i.name as item_name FROM whatsapp_transactions t
-      LEFT JOIN items i ON i.id = t.item_id
+      LEFT JOIN items i ON i.id = t.item_id AND i.tenant_id = t.tenant_id
+      WHERE t.tenant_id = ?
       ORDER BY t.id DESC LIMIT ?
-    `).all(limit);
+    `).all(tId, limit);
   }
   res.json(rows);
 });
@@ -567,7 +606,7 @@ router.get('/whatsapp/transactions', (req, res) => {
  * يُخزّن في bank_transactions مع source='gmsg' و external_id (UNIQUE).
  */
 router.post('/bank-message/ingest', internalAuth, (req, res) => {
-  const { source, text, external_id, occurred_at, contact_name } = req.body || {};
+  const { source, text, external_id, occurred_at, contact_name, tenant_id } = req.body || {};
 
   if (!text || typeof text !== 'string') {
     return res.status(400).json({ error: 'text required' });
@@ -575,12 +614,13 @@ router.post('/bank-message/ingest', internalAuth, (req, res) => {
   if (!external_id) {
     return res.status(400).json({ error: 'external_id required' });
   }
+  const tId = Number.isInteger(Number(tenant_id)) && Number(tenant_id) > 0 ? Number(tenant_id) : DEFAULT_TENANT_ID;
   const effSource = source === 'gmsg' ? 'gmsg' : 'gmsg'; // حالياً نقبل gmsg فقط من هذا الـ endpoint
 
   // dedup: لو سبق ودخلت هذه الرسالة بنفس external_id، نُرجع duplicate دون تعديل أي شيء
   const existing = db.prepare(
-    'SELECT id FROM bank_transactions WHERE external_id = ?'
-  ).get(external_id);
+    'SELECT id FROM bank_transactions WHERE tenant_id = ? AND external_id = ?'
+  ).get(tId, external_id);
   if (existing) {
     return res.json({ ok: true, duplicate: true, transaction_id: existing.id });
   }
@@ -591,25 +631,25 @@ router.post('/bank-message/ingest', internalAuth, (req, res) => {
     // نسجّل المحاولة في bank_sms_log كي تظهر في لوحة التشخيص
     db.prepare(`
       INSERT INTO bank_sms_log
-        (ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
-      VALUES (?, 1, 'no_pattern', ?, ?, ?, NULL, '', NULL, NULL)
-    `).run('gmsg-scraper', 'gmsg: pattern not matched', contact_name || '', text);
+        (tenant_id, ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
+      VALUES (?, ?, 1, 'no_pattern', ?, ?, ?, NULL, '', NULL, NULL)
+    `).run(tId, 'gmsg-scraper', 'gmsg: pattern not matched', contact_name || '', text);
     return res.status(422).json({ ok: false, error: 'no_pattern' });
   }
 
-  // اعثر على أوّل بند bank مُفعَّل (نفس منطق webhook الحالي)
+  // اعثر على أوّل بند bank مُفعَّل (نفس منطق webhook الحالي) — مُقيَّد بالمستأجر
   const bankItem = db.prepare(`
     SELECT i.id, cv.try_amount
-    FROM items i LEFT JOIN current_values cv ON cv.item_id = i.id
-    WHERE i.type = 'bank' AND i.is_active = 1
+    FROM items i LEFT JOIN current_values cv ON cv.item_id = i.id AND cv.tenant_id = i.tenant_id
+    WHERE i.type = 'bank' AND i.is_active = 1 AND i.tenant_id = ?
     ORDER BY i.sort_order ASC LIMIT 1
-  `).get();
+  `).get(tId);
   if (!bankItem) {
     db.prepare(`
       INSERT INTO bank_sms_log
-        (ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
-      VALUES (?, 1, 'no_bank_item', 'No active bank item', ?, ?, NULL, ?, ?, NULL)
-    `).run('gmsg-scraper', contact_name || '', text, parsed.direction, parsed.amount);
+        (tenant_id, ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
+      VALUES (?, ?, 1, 'no_bank_item', 'No active bank item', ?, ?, NULL, ?, ?, NULL)
+    `).run(tId, 'gmsg-scraper', contact_name || '', text, parsed.direction, parsed.amount);
     return res.status(404).json({ ok: false, error: 'no_bank_item' });
   }
 
@@ -622,15 +662,16 @@ router.post('/bank-message/ingest', internalAuth, (req, res) => {
   let txId;
   try {
     txId = db.transaction(() => {
-      db.prepare('UPDATE current_values SET try_amount = ? WHERE item_id = ?')
-        .run(newBalance, bankItem.id);
+      db.prepare('UPDATE current_values SET try_amount = ? WHERE item_id = ? AND tenant_id = ?')
+        .run(newBalance, bankItem.id, tId);
 
       const ins = db.prepare(`
         INSERT INTO bank_transactions
-          (item_id, direction, amount, sender_receiver, description, transaction_time,
+          (tenant_id, item_id, direction, amount, sender_receiver, description, transaction_time,
            raw_sms, balance_after, source, external_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
+        tId,
         bankItem.id,
         parsed.direction,
         parsed.amount,
@@ -646,9 +687,9 @@ router.post('/bank-message/ingest', internalAuth, (req, res) => {
 
       db.prepare(`
         INSERT INTO bank_sms_log
-          (ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
-        VALUES (?, 1, 'applied', '', ?, ?, ?, ?, ?, ?)
-      `).run('gmsg-scraper', contact_name || '', text, bankItem.id, parsed.direction, parsed.amount, newId);
+          (tenant_id, ip, secret_ok, parse_status, error_message, sender, raw_body, item_id, direction, amount, transaction_id)
+        VALUES (?, ?, 1, 'applied', '', ?, ?, ?, ?, ?, ?)
+      `).run(tId, 'gmsg-scraper', contact_name || '', text, bankItem.id, parsed.direction, parsed.amount, newId);
 
       return newId;
     })();
@@ -656,8 +697,8 @@ router.post('/bank-message/ingest', internalAuth, (req, res) => {
     // SQLITE_CONSTRAINT_UNIQUE → سباق مع طلب آخر بنفس external_id
     if (String(e.message).includes('UNIQUE')) {
       const existing2 = db.prepare(
-        'SELECT id FROM bank_transactions WHERE external_id = ?'
-      ).get(external_id);
+        'SELECT id FROM bank_transactions WHERE tenant_id = ? AND external_id = ?'
+      ).get(tId, external_id);
       return res.json({ ok: true, duplicate: true, transaction_id: existing2?.id });
     }
     return res.status(500).json({ ok: false, error: e.message });
@@ -894,10 +935,11 @@ router.post('/bank-message/upload-session', sessionUpload.single('session'), asy
     }
 
     // 4) سجّل وقت آخر تحديث للجلسة (يظهر في الواجهة)
+    const sessionTid = tidFrom(req);
     db.prepare(`
-      INSERT INTO settings (key, value) VALUES ('gmsg_session_uploaded_at', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(new Date().toISOString());
+      INSERT INTO settings (tenant_id, key, value) VALUES (?, 'gmsg_session_uploaded_at', ?)
+      ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value
+    `).run(sessionTid, new Date().toISOString());
 
     // 5) أعد تشغيل الـ scraper (fire-and-forget — لا ننتظر pairing/التشغيل الكامل)
     //    استدعاء /start قد يستغرق حتى 300 ثانية لانتظار قشرة الواجهة،
@@ -928,7 +970,8 @@ router.post('/bank-message/upload-session', sessionUpload.single('session'), asy
  * متى آخر مرّة رُفعت جلسة Google Messages.
  */
 router.get('/bank-message/session-info', (req, res) => {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'gmsg_session_uploaded_at'").get();
+  const tId = tidFrom(req);
+  const row = db.prepare("SELECT value FROM settings WHERE tenant_id = ? AND key = 'gmsg_session_uploaded_at'").get(tId);
   res.json({
     uploaded_at: row?.value || null,
   });

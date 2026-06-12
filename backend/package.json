@@ -4,13 +4,24 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "test:migration": "node test/test-multitenant-migration.js",
+    "test:auth": "node test/test-auth.js",
+    "test:admin": "node test/test-admin.js",
+    "test:scrapers": "node test/test-scrapers.js",
+    "test:webhook-secrets": "node test/test-webhook-secrets.js",
+    "test:integration": "node test/test-integration.js",
+    "admin:create": "node scripts/create-admin.js",
+    "tenant:rotate-secret": "node scripts/rotate-tenant-secret.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.17",
+    "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^3.3.2"
   }

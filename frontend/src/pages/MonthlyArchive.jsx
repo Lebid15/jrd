@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CalendarRange, Trash2, ChevronDown, ChevronUp, RefreshCw, Plus, TrendingUp, TrendingDown, FileDown } from 'lucide-react';
+import { CalendarRange, Trash2, ChevronDown, ChevronUp, RefreshCw, Plus, TrendingUp, TrendingDown, FileDown, Filter } from 'lucide-react';
 import { toast } from 'react-toastify';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -126,11 +126,23 @@ export default function MonthlyArchive() {
   const [preview, setPreview] = useState(null);
   const [exportingId, setExportingId] = useState(null);
 
+  // ─── فلترة ─────
+  const emptyFilters = { from: '', to: '', profit_sign: '', q: '' };
+  const [filters, setFilters] = useState(emptyFilters);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersActive = Object.values(filters).some(v => String(v).trim() !== '');
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      const params = { limit: 100 };
+      if (filters.from) params.from = filters.from;
+      if (filters.to) params.to = filters.to;
+      if (filters.profit_sign) params.profit_sign = filters.profit_sign;
+      if (filters.q && filters.q.trim()) params.q = filters.q.trim();
+
       const [list, prev] = await Promise.all([
-        api.get('/monthly?limit=100'),
+        api.get('/monthly', { params }),
         api.get('/monthly/preview/next'),
       ]);
       setInventories(list.data.inventories || []);
@@ -141,9 +153,11 @@ export default function MonthlyArchive() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filters]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const resetFilters = () => setFilters(emptyFilters);
 
   const handleCreate = async () => {
     if (!preview) return;
@@ -318,11 +332,98 @@ export default function MonthlyArchive() {
         </div>
       )}
 
+      {/* Filters */}
+      <div className="bg-white rounded-2xl shadow border border-gray-100 mb-4">
+        <button
+          onClick={() => setFiltersOpen(o => !o)}
+          className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition-colors rounded-2xl"
+        >
+          <div className="flex items-center gap-2">
+            <Filter size={16} className="text-gray-400" />
+            <span className="text-sm font-medium text-gray-700">فلترة</span>
+            {filtersActive && (
+              <span className="bg-purple-600 text-white text-[10px] rounded-full px-1.5 py-0.5 leading-none">
+                {Object.values(filters).filter(v => String(v).trim() !== '').length}
+              </span>
+            )}
+            <span className="text-xs text-gray-400">— {inventories.length} نتيجة (من أصل {total})</span>
+          </div>
+          {filtersOpen ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+        </button>
+
+        {filtersOpen && (
+          <div className="px-4 pb-4 border-t border-gray-100 pt-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">من تاريخ</label>
+                <input
+                  type="date"
+                  value={filters.from}
+                  onChange={e => setFilters({ ...filters, from: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">إلى تاريخ</label>
+                <input
+                  type="date"
+                  value={filters.to}
+                  onChange={e => setFilters({ ...filters, to: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">ربح الفترة</label>
+                <select
+                  value={filters.profit_sign}
+                  onChange={e => setFilters({ ...filters, profit_sign: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white"
+                >
+                  <option value="">الكل</option>
+                  <option value="positive">ربح موجب</option>
+                  <option value="negative">خسارة</option>
+                </select>
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">بحث في الملاحظات</label>
+                <input
+                  type="text"
+                  value={filters.q}
+                  onChange={e => setFilters({ ...filters, q: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') loadData(); }}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400"
+                  placeholder="كلمة"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={loadData}
+                className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-1.5 rounded-lg text-sm"
+              >
+                تطبيق
+              </button>
+              <button
+                onClick={resetFilters}
+                disabled={!filtersActive}
+                className="text-gray-500 hover:text-gray-700 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                مسح الفلتر
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* List */}
       {inventories.length === 0 ? (
         <div className="bg-white rounded-2xl shadow border border-gray-100 p-10 text-center">
           <CalendarRange className="mx-auto text-gray-300 mb-3" size={48} />
-          <p className="text-gray-500">لا توجد جرود شهرية بعد. اضغط "إنشاء جرد شهري" للبدء.</p>
+          <p className="text-gray-500">
+            {filtersActive
+              ? 'لا توجد جرود شهرية تطابق الفلتر الحالي'
+              : 'لا توجد جرود شهرية بعد. اضغط "إنشاء جرد شهري" للبدء.'}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">

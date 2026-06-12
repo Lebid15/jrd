@@ -26,6 +26,10 @@ export const config = {
   internalApiKey: str('INTERNAL_API_KEY', ''),
   backendUrl: str('BACKEND_URL', 'http://127.0.0.1:3001'),
 
+  // معرّف المستأجر — يُرسَل مع كل ingest إلى backend لعزل البيانات.
+  // افتراضي 1 للتوافق الرجعي (instance قديم بدون env).
+  tenantId: int('GMSG_TENANT_ID', 1),
+
   browserDataDir: str('GMSG_BROWSER_DATA', '') || path.join(__dirname, '..', 'browser-data'),
   headless: bool('GMSG_HEADLESS', true),
   targetContact: str('GMSG_TARGET_CONTACT', 'KUVEYT TURK'),

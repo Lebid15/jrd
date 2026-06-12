@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import itemsRouter from './routes/items.js';
@@ -7,9 +8,12 @@ import inventoryRouter from './routes/inventory.js';
 import settingsRouter from './routes/settings.js';
 import photosRouter from './routes/photos.js';
 import apiConfigsRouter from './routes/apiConfigs.js';
-import bankRouter from './routes/bank.js';
+import bankRouter, { smsWebhookHandler } from './routes/bank.js';
 import internalRouter from './routes/internal.js';
 import monthlyRouter from './routes/monthly.js';
+import authRouter from './routes/auth.js';
+import adminRouter from './routes/admin.js';
+import { requireAuth, requireAdmin, optionalAuth } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR
@@ -18,23 +22,42 @@ const DATA_DIR = process.env.DATA_DIR
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true,
+}));
 app.use(express.json());
+app.use(cookieParser());
 
-// Serve uploaded photos
+// Serve uploaded photos (مفتوحة للقراءة بدون auth لأن src في <img> لا يحمل cookie تلقائياً عبر CORS).
+// المسارات تحت /uploads/t<id>/... فهي قابلة للتخمين فقط لمن يعرف tenant_id + filename UUID.
 app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')));
 
-// Healthcheck (Railway)
+// Healthcheck
 app.get('/healthz', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
-// API routes
+// مسارات عامّة قبل auth:
+//   - /api/auth/*   : login/logout/me (الـ login لا يملك كوكي بعد)
+//   - /api/internal : محمي بـ INTERNAL_API_KEY داخلياً (للبوت/scrapers)
+//   - /api/webhooks/bank-sms : webhook خارجي محمي بـ SMS_WEBHOOK_SECRET في URL
+app.use('/api/auth', authRouter);
+// optionalAuth: يضع req.user إن وجد cookie صحيح — حتّى تستطيع internal routes
+// التي تستدعيها الواجهة أن تحدد tenant_id تلقائياً من المستخدم.
+// البوت/scrapers يستخدمون X-Internal-Api-Key (لا cookie) ويمرّرون tenant_id في body.
+app.use('/api/internal', optionalAuth, internalRouter);
+app.post('/api/webhooks/bank-sms/:tenantSecret', smsWebhookHandler);
+// التوافق مع URL القديم — يستخدم SMS_WEBHOOK_SECRET العام (سيُلغى في المرحلة 10 بعد تحديث SMS Forwarder).
+app.post('/api/bank/sms-webhook', smsWebhookHandler);
+
+// كل ما تحت /api بعد هذه النقطة يتطلّب login (cookie أو Bearer).
+app.use('/api', requireAuth);
+app.use('/api/admin', requireAdmin, adminRouter); // requireAdmin داخلياً يستدعي requireAuth، لكن وضعناه صراحةً للوضوح.
 app.use('/api/items', itemsRouter);
 app.use('/api/inventory', inventoryRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/photos', photosRouter);
 app.use('/api/configs', apiConfigsRouter);
 app.use('/api/bank', bankRouter);
-app.use('/api/internal', internalRouter);
 app.use('/api/monthly', monthlyRouter);
 
 // Serve frontend static files in production

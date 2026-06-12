@@ -1,0 +1,82 @@
+# ============================================================
+# JRD — Docker Compose للتطوير المحلي على Windows/Mac/Linux
+# ------------------------------------------------------------
+# لا يحتاج Node.js مثبَّتاً على جهازك — كل شيء داخل Docker.
+#
+# الاستخدام:
+#   docker compose -f docker-compose.dev.yml up
+#   # الواجهة:  http://localhost:5173
+#   # API:      http://localhost:3001
+#
+# إيقاف:
+#   docker compose -f docker-compose.dev.yml down
+#
+# إعادة تثبيت deps بعد تغيير package.json:
+#   docker compose -f docker-compose.dev.yml down
+#   docker volume rm alaya_backend_node_modules alaya_frontend_node_modules
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# ملاحظات:
+#   - DB + uploads تُحفَظ في ./backend/data (bind mount).
+#   - hot reload شغّال للـ backend (--watch) والـ frontend (Vite HMR).
+#   - لا يشغّل البوت ولا scrapers (يحتاجان WhatsApp QR وبيئة خاصّة).
+# ============================================================
+
+services:
+  backend:
+    image: node:20-bookworm-slim
+    container_name: jrd-backend-dev
+    working_dir: /app
+    command: >
+      bash -lc "
+        if [ ! -d node_modules/express ]; then
+          echo '>>> Installing backend deps...';
+          npm install --no-audit --no-fund;
+        fi;
+        echo '>>> Starting backend on :3001 with --watch';
+        node --watch src/index.js
+      "
+    environment:
+      NODE_ENV: development
+      PORT: "3001"
+      DATA_DIR: /app/data
+      # أسرار التطوير المحلي (لا تُستخدم في الإنتاج إطلاقاً)
+      JWT_SECRET: "dev_jwt_secret_change_in_production_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      INTERNAL_API_KEY: "dev_internal_key_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      BOT_ENCRYPTION_KEY: "dev_bot_enc_key_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      SMS_WEBHOOK_SECRET: "dev_sms_webhook_secret_xxxxx"
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  frontend:
+    image: node:20-bookworm-slim
+    container_name: jrd-frontend-dev
+    working_dir: /app
+    command: >
+      bash -lc "
+        if [ ! -d node_modules/vite ]; then
+          echo '>>> Installing frontend deps...';
+          npm install --no-audit --no-fund;
+        fi;
+        echo '>>> Starting Vite dev server on :5173';
+        npx vite --host 0.0.0.0 --port 5173
+      "
+    environment:
+      NODE_ENV: development
+      VITE_BACKEND_URL: "http://backend:3001"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend_node_modules:
+  frontend_node_modules:

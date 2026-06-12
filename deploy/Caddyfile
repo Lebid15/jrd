@@ -1,0 +1,59 @@
+# ============================================================
+# JRD — Caddy reverse proxy
+# ------------------------------------------------------------
+# - HTTPS تلقائي عبر Let's Encrypt.
+# - أثناء فترة التشغيل المزدوج: نستخدم new.ahlacard.net.
+# - بعد الانتقال الكامل: نضيف ahlacard.net و www.ahlacard.net
+#   (راجع التعليمات أسفل الملف).
+# ============================================================
+
+# المرحلة الحالية — نطاق مؤقّت للنسخة الجديدة على Hetzner
+new.ahlacard.net {
+	encode zstd gzip
+
+	# ترويسات أمان أساسية
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options    "nosniff"
+		X-Frame-Options           "SAMEORIGIN"
+		Referrer-Policy           "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# الخدمة الأساسية (backend + frontend dist مدمج)
+	reverse_proxy app:3001 {
+		header_up X-Real-IP        {remote_host}
+		header_up X-Forwarded-For  {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+		format json
+	}
+}
+
+# ------------------------------------------------------------
+# بعد التحقّق من استقرار النسخة الجديدة + نقل DNS:
+# 1) أوقف Railway.
+# 2) عدّل DNS: ahlacard.net + www.ahlacard.net → IP Hetzner.
+# 3) فعّل البلوك التالي (احذف # في بدايات السطور):
+# ------------------------------------------------------------
+# ahlacard.net, www.ahlacard.net {
+# 	encode zstd gzip
+# 	header {
+# 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+# 		X-Content-Type-Options    "nosniff"
+# 		X-Frame-Options           "SAMEORIGIN"
+# 		Referrer-Policy           "strict-origin-when-cross-origin"
+# 		-Server
+# 	}
+# 	reverse_proxy app:3001 {
+# 		header_up X-Real-IP        {remote_host}
+# 		header_up X-Forwarded-For  {remote_host}
+# 		header_up X-Forwarded-Proto {scheme}
+# 	}
+# }

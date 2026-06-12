@@ -1,0 +1,69 @@
+# ============================================================
+# JRD — Hetzner Production Compose
+# ------------------------------------------------------------
+# مبدأ "لا انقطاع للجلسات":
+#   - الكود يُبنى داخل الحاوية مع كل deploy.
+#   - البيانات (DB + جلسات + uploads) تبقى على المضيف
+#     في /srv/jrd/data وتُربط bind-mount كـ /data داخل الحاوية.
+#   - أي docker compose down/up أو reboot لا يمسّ /srv/jrd/data.
+#
+# ملاحظات:
+#   - هذا الملف للـ Hetzner فقط. Railway يبقى يعمل كما هو
+#     عبر Dockerfile + railway.toml ولا يتأثر بهذا الإعداد.
+#   - context: .. لأن الـ Dockerfile في جذر المستودع.
+# ============================================================
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: jrd-app:latest
+    container_name: jrd-app
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      # المسارات الدائمة داخل الحاوية (تُربط بـ /srv/jrd/data على المضيف)
+      DATA_DIR: /data
+      AUTH_DIR: /data/auth_sessions
+      GMSG_BROWSER_DATA: /data/gmsg-browser-data
+      NODE_ENV: production
+      PORT: "3001"
+    volumes:
+      # bind mount واحد فقط — كل شيء دائم تحته
+      - /srv/jrd/data:/data
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3001/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - jrd
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: jrd-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - jrd
+
+networks:
+  jrd:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

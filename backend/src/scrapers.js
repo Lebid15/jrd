@@ -17,8 +17,10 @@ const TIMEOUT_MS = parseInt(process.env.SCRAPER_TIMEOUT_MS || '180000', 10);
 /**
  * Run the bayi.alayatl scraper as a child process.
  * Returns the parsed totals object: { bakiye_toplami, borc_toplami, bayi_alacagi, toplam_bayi_sayisi }
+ *
+ * المسار: BROWSER_DATA_ROOT/t<tenantId>/item-<itemId>/ — عزل filesystem لكل مستأجر+بند.
  */
-export function runBayiAlayatlScraper(config, { itemId } = {}) {
+export function runBayiAlayatlScraper(config, { itemId, tenantId = 1 } = {}) {
   return new Promise((resolve, reject) => {
     const phone = (config?.kod || '').trim();
     const password = (config?.sifre || '').trim();
@@ -28,10 +30,13 @@ export function runBayiAlayatlScraper(config, { itemId } = {}) {
       return reject(new Error('Missing phone (kod) or password (sifre)'));
     }
 
-    // Per-item browser-data dir so multiple bayi accounts don't collide
+    // Per-tenant + per-item browser-data dir.
+    // ملاحظة: items.id فريد عالمياً (AUTOINCREMENT)، لكن الفصل بـ t<tid> يُسهّل النسخ الاحتياطي
+    // والحذف عند إلغاء tenant.
+    const tenantDir = path.join(BROWSER_DATA_ROOT, `t${tenantId}`);
     const browserDir = itemId
-      ? path.join(BROWSER_DATA_ROOT, `item-${itemId}`)
-      : BROWSER_DATA_ROOT;
+      ? path.join(tenantDir, `item-${itemId}`)
+      : tenantDir;
     fs.mkdirSync(browserDir, { recursive: true });
 
     const child = spawn(process.execPath, [SCRAPER_ENTRY], {

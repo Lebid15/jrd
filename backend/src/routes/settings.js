@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import db from '../database.js';
+import { tid } from '../tenantHelpers.js';
 
 const router = Router();
 
 // Get all settings
 router.get('/', (req, res) => {
-  const settings = db.prepare('SELECT * FROM settings').all();
+  const t = tid(req);
+  const settings = db.prepare('SELECT key, value FROM settings WHERE tenant_id = ?').all(t);
   const obj = {};
   for (const s of settings) obj[s.key] = s.value;
   res.json(obj);
@@ -13,13 +15,12 @@ router.get('/', (req, res) => {
 
 // Update setting
 router.put('/:key', (req, res) => {
+  const t = tid(req);
   const { value } = req.body;
-  const existing = db.prepare('SELECT key FROM settings WHERE key = ?').get(req.params.key);
-  if (existing) {
-    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(String(value), req.params.key);
-  } else {
-    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(req.params.key, String(value));
-  }
+  db.prepare(`
+    INSERT INTO settings (tenant_id, key, value) VALUES (?, ?, ?)
+    ON CONFLICT(tenant_id, key) DO UPDATE SET value = excluded.value
+  `).run(t, req.params.key, String(value));
   res.json({ success: true });
 });
 

@@ -10,6 +10,7 @@ export async function sendToBackend({ text, occurredAt, externalId, contactName 
   const url = `${config.backendUrl.replace(/\/$/, '')}/api/internal/bank-message/ingest`;
   const body = {
     source: 'gmsg',
+    tenant_id: config.tenantId,
     contact_name: contactName || config.targetContact,
     text,
     occurred_at: occurredAt || null,   // وقت ظاهر في الرسالة (تقريبي)

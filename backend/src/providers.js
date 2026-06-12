@@ -129,7 +129,7 @@ export async function fetchBalance(providerType, config, opts = {}) {
       return { value: result.balance, currency: 'USD', details: result };
     }
     case 'bayi_alayatl': {
-      const result = await runBayiAlayatlScraper(config, { itemId: opts.itemId });
+      const result = await runBayiAlayatlScraper(config, { itemId: opts.itemId, tenantId: opts.tenantId });
       // We want "Benim Alacağım" = نفس الرقم بإشارة معكوسة عن "Bayi Alacağı"
       const value = result.bayi_alacagi != null ? -result.bayi_alacagi : null;
       return { value, details: result };

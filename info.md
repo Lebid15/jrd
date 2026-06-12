@@ -1,35 +1,109 @@
 # طريقة الرفع والنشر (Deployment)
 
-## الخلاصة السريعة
-المشروع موصول بـ **Railway** عبر **GitHub** (auto-deploy من فرع `main`).
-كل ما عليّ فعله:
+> **آخر تحديث**: 12 يونيو 2026 — بدأ النقل من Railway إلى Hetzner.
+
+---
+
+## الحالة الحالية (Migration)
+
+- **Railway**: ما زال يعمل بآخر نسخة منشورة — **GitHub auto-deploy معطَّل** (الـ branch `main` مفصول من إعدادات Railway). أي push جديد لن يؤثّر على Railway.
+- **Hetzner**: تمّ إنشاء سيرفر جديد، البنية التحتية جاهزة، لم يُنشَر التطبيق بعد.
+
+---
+
+## معلومات سيرفر Hetzner (الإنتاج الجديد)
+
+| الحقل | القيمة |
+|-------|--------|
+| Project name | `jrd` |
+| Server name | `jrd-prod` |
+| Type | CPX32 (4 vCPU AMD, 8 GB RAM, 160 GB SSD) |
+| Location | Falkenstein (FSN1), Germany |
+| OS | Ubuntu 24.04 LTS |
+| **IPv4** | `167.233.124.62` |
+| IPv6 | `2a01:4f8:c014:2f03::1` |
+| السعر | ~$16.49/شهر |
+
+### الدخول SSH
 
 ```powershell
-git add <الملفات أو .>
-git commit -m "رسالة واضحة"
-git push
+ssh root@167.233.124.62
 ```
 
-Railway يلتقط الـ push تلقائياً ويبدأ build/deploy خلال ثوانٍ.
+- المفتاح: `$HOME\.ssh\id_ed25519` (تم توليده على جهاز التطوير، اسمه في Hetzner = `dev-laptop`).
+- لا يوجد passphrase (مطلوب لتشغيل GitHub Actions مستقبلاً).
 
-## روابط مهمة
+### البنية التحتية الجاهزة على السيرفر
+
+```
+/srv/jrd/
+├── app/                       ← هنا سيُستنسَخ الكود (git clone)
+└── data/                      ← دائم، لا يُمسَح أبداً
+    ├── db/                    ← jrd.db (SQLite)
+    ├── tenants/               ← جلسات + uploads لكل مستأجر
+    └── backups/
+        ├── daily/
+        └── monthly/
+```
+
+### الحزم المثبَّتة
+
+- Docker 29.1.3 + Docker Compose v2.40.3 (active)
+- Git, SQLite3, UFW, curl
+
+### الجدار الناري (UFW)
+
+- مسموح: SSH (22), HTTP (80), HTTPS (443)
+- ممنوع: كل ما عداه
+
+---
+
+## معلومات Railway (الإنتاج الحالي — مؤقت)
+
 - **مستودع GitHub**: https://github.com/Lebid15/jrd
-- **Railway Project (المراقبة)**:
-  https://railway.com/project/fec70dd5-0c5d-4149-855f-ffac4cc2c932/service/31f32c5e-0f55-42e9-b666-45f81931f38e?environmentId=a72c2319-811a-4231-964f-770506175bcf
-- **الفرع المنشور**: `main`
+- **Railway Project**:
+  https://railway.com/project/fec70dd5-0c5d-4149-855f-ffac4cc2c932/service/31f32c5e-0f55-42e9-b666-45f81931f38e
+- **النطاق الحالي**: `ahlacard.net` (DNS يُوجَّه لـ Railway)
+- **حالة الـ deploy**: GitHub branch `main` **مفصول** — لا تحديث تلقائي حتى نُكمل النقل.
 
-## توزيع المهام (اتفاق ثابت بيننا)
-- **أنا (Copilot)**: أعدّل الكود → `git add` → `git commit` → `git push`.
-- **أنت**: تراقب نتائج البناء والتشغيل في صفحة Railway أعلاه، وتُبلغني إذا فشل البناء أو ظهرت أخطاء runtime.
+> **بعد cutover**: نوقف خدمات Railway ونحوّل DNS لـ Hetzner. التفاصيل في [deploy/cutover-checklist.md](deploy/cutover-checklist.md).
 
-## ملاحظات
-- لا حاجة لاستخدام `railway up` أو CLI — النشر يتم بالكامل عبر دفع git.
-- ملف `railway.toml` و `Dockerfile` موجودان في جذر المستودع ويضبطان البناء.
-- بعد كل push انتظر دقيقة ~ ثم حدّث صفحة Railway لرؤية اللوج.
+---
+
+## دورة العمل الجديدة (بعد النشر على Hetzner)
+
+> **القاعدة الذهبية**: التحديث يطال الكود فقط. البيانات في `/srv/jrd/data` لا تُمَسّ.
+
+```bash
+# على السيرفر (Hetzner):
+ssh root@167.233.124.62
+cd /srv/jrd/app
+git pull
+docker compose -f deploy/docker-compose.yml build app
+docker compose -f deploy/docker-compose.yml up -d app
+```
+
+لاحقاً: سنُنشئ **GitHub Actions** ليؤتمت هذا عند كل push على `main`.
+
+---
+
+## توزيع المهام
+
+- **Copilot**: يُعدِّل الكود → `git add` → `git commit` → `git push`. (Railway لم يعد يلتقط هذه التحديثات.)
+- **أنت**: تنفّذ `deploy/deploy.sh` على Hetzner عند الحاجة (أو ننتظر GitHub Actions لاحقاً).
+
+---
 
 ## أوامر مساعدة سريعة
+
 ```powershell
-git status                    # ماذا تغير
-git log --oneline -10         # آخر 10 commits
-git diff <file>               # مراجعة قبل commit
+# على جهاز التطوير:
+git status
+git log --oneline -10
+git diff <file>
+
+# على سيرفر Hetzner:
+docker compose -f /srv/jrd/app/deploy/docker-compose.yml ps
+docker compose -f /srv/jrd/app/deploy/docker-compose.yml logs -f app
+df -h /srv/jrd/data
 ```

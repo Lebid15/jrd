@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff, Upload } from 'lucide-react';
+import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff, Upload, Filter } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -30,13 +30,27 @@ export default function Bank() {
   const [gmsgUploadBusy, setGmsgUploadBusy] = useState(false);
   const [gmsgUploadProgress, setGmsgUploadProgress] = useState(0);
 
+  // ─── فلترة سجل المعاملات ─────
+  const emptyFilters = { from: '', to: '', direction: '', min_amount: '', max_amount: '', q: '' };
+  const [filters, setFilters] = useState(emptyFilters);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersActive = Object.values(filters).some(v => String(v).trim() !== '');
+
   // ─── تحميل البيانات ─────────────────────────────────────────────────────
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      const params = { limit: 100 };
+      if (filters.from) params.from = filters.from;
+      if (filters.to) params.to = filters.to;
+      if (filters.direction) params.direction = filters.direction;
+      if (filters.min_amount) params.min_amount = filters.min_amount;
+      if (filters.max_amount) params.max_amount = filters.max_amount;
+      if (filters.q && filters.q.trim()) params.q = filters.q.trim();
+
       const [itemsRes, txRes] = await Promise.all([
         api.get('/items'),
-        api.get('/bank/transactions?limit=100'),
+        api.get('/bank/transactions', { params }),
       ]);
 
       const bank = itemsRes.data.find(i => i.type === 'bank');
@@ -47,9 +61,13 @@ export default function Bank() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filters]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const resetFilters = () => {
+    setFilters(emptyFilters);
+  };
 
   // ─── تشخيص webhook ─────────────────────────────────────────────────────
   const loadDiagnostics = useCallback(async () => {
@@ -309,14 +327,126 @@ export default function Bank() {
       <div className="bg-white rounded-2xl shadow border border-gray-100">
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <h2 className="font-bold text-gray-700">سجل المعاملات</h2>
-          <button onClick={loadData} className="text-gray-400 hover:text-gray-600 transition-colors">
-            <RefreshCw size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setFiltersOpen(o => !o)}
+              className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border transition-colors ${
+                filtersActive
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+              }`}
+              title="فلترة"
+            >
+              <Filter size={14} />
+              فلترة
+              {filtersActive && (
+                <span className="bg-emerald-600 text-white text-[10px] rounded-full px-1.5 py-0.5 leading-none">
+                  {Object.values(filters).filter(v => String(v).trim() !== '').length}
+                </span>
+              )}
+              {filtersOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+            <button onClick={loadData} className="text-gray-400 hover:text-gray-600 transition-colors">
+              <RefreshCw size={18} />
+            </button>
+          </div>
         </div>
+
+        {filtersOpen && (
+          <div className="p-4 border-b border-gray-100 bg-gray-50/50">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">من تاريخ</label>
+                <input
+                  type="date"
+                  value={filters.from}
+                  onChange={e => setFilters({ ...filters, from: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">إلى تاريخ</label>
+                <input
+                  type="date"
+                  value={filters.to}
+                  onChange={e => setFilters({ ...filters, to: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">الاتجاه</label>
+                <select
+                  value={filters.direction}
+                  onChange={e => setFilters({ ...filters, direction: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+                >
+                  <option value="">الكل</option>
+                  <option value="in">وارد فقط</option>
+                  <option value="out">صادر فقط</option>
+                </select>
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">أقل مبلغ ₺</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={filters.min_amount}
+                  onChange={e => setFilters({ ...filters, min_amount: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  placeholder="0"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">أعلى مبلغ ₺</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={filters.max_amount}
+                  onChange={e => setFilters({ ...filters, max_amount: e.target.value })}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  placeholder="∞"
+                />
+              </div>
+              <div className="flex flex-col">
+                <label className="text-xs text-gray-500 mb-1">بحث (مرسِل/وصف)</label>
+                <input
+                  type="text"
+                  value={filters.q}
+                  onChange={e => setFilters({ ...filters, q: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') loadData(); }}
+                  className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                  placeholder="اسم / كلمة"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 mt-3">
+              <button
+                onClick={loadData}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg text-sm"
+              >
+                تطبيق
+              </button>
+              <button
+                onClick={resetFilters}
+                disabled={!filtersActive}
+                className="text-gray-500 hover:text-gray-700 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                مسح الفلتر
+              </button>
+              <span className="text-xs text-gray-400 mr-auto">
+                {transactions.length} نتيجة
+              </span>
+            </div>
+          </div>
+        )}
 
         {transactions.length === 0 ? (
           <div className="p-10 text-center text-gray-400 text-sm">
-            لا توجد معاملات بعد — ستظهر هنا تلقائياً عند استقبال SMS من كويت ترك
+            {filtersActive
+              ? 'لا توجد معاملات تطابق الفلتر الحالي'
+              : 'لا توجد معاملات بعد — ستظهر هنا تلقائياً عند استقبال SMS من كويت ترك'}
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
