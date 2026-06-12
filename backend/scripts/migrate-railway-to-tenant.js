@@ -132,11 +132,14 @@ function migrateTable(t) {
     summary.push({ table: t, copied: 0, note: 'empty-source' });
     return;
   }
-  // Build INSERT
+  // Build INSERT (use REPLACE for tables with composite/non-id natural keys
+  // so previously-seeded rows in the target are overwritten by source values).
+  const REPLACE_TABLES = new Set(['settings']);
+  const verb = REPLACE_TABLES.has(t) ? 'INSERT OR REPLACE' : 'INSERT';
   const insertCols = hasTenant ? cols : [...cols, 'tenant_id'];
   const placeholders = insertCols.map((c) => `@${c}`).join(', ');
   const stmt = target.prepare(
-    `INSERT INTO "${t}" (${insertCols.map((c) => `"${c}"`).join(', ')}) VALUES (${placeholders})`
+    `${verb} INTO "${t}" (${insertCols.map((c) => `"${c}"`).join(', ')}) VALUES (${placeholders})`
   );
   let copied = 0;
   for (const row of rows) {
