@@ -79,6 +79,16 @@ app.post('/recheck', internalAuth, async (req, res) => {
   }
 });
 
+// تشخيص: ماذا يرى الـ scraper الآن من رسائل (بدون أي إرسال أو تعديل seen).
+app.get('/peek', internalAuth, async (req, res) => {
+  try {
+    const out = await scraper.peek();
+    res.status(out.ok === false ? 503 : 200).json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message, state: scraper.state });
+  }
+});
+
 // تشخيص: ماذا يعرض Chromium الآن (URL + title + نص الـ body المختصر)؟
 app.get('/debug-page', internalAuth, async (req, res) => {  try {
     const page = scraper.page;

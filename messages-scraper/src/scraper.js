@@ -32,8 +32,7 @@ export class Scraper {
     this.lastError = null;
     this.lastSeenAt = null;            // آخر مرّة استطلعنا فيها بنجاح
     this.lastMessageAt = null;         // آخر رسالة جديدة عُولجت
-    this.messagesProcessedTotal = 0;
-    this.context = null;
+    this.messagesProcessedTotal = 0;    this.wrappersCountLastTick = 0;    // تشخيصي: عدد wrappers الرسائل المدرُوسة في آخر dt    this.context = null;
     this.page = null;
     this.pollTimer = null;
     this.watchdogTimer = null;        // حارس ذاتي الاستشفاء (يعمل دائماً)
@@ -78,11 +77,43 @@ export class Scraper {
       last_seen_at: this.lastSeenAt,
       last_message_at: this.lastMessageAt,
       messages_processed_total: this.messagesProcessedTotal,
+      wrappers_count_last_tick: this.wrappersCountLastTick,
+      seen_count: this.seen.size,
       active_selectors: this._activeSelectors,
       target_contact: config.targetContact,
       poll_interval_ms: config.pollIntervalMs,
       headless: config.headless,
       browser_data_dir: config.browserDataDir,
+    };
+  }
+
+  /**
+   * peek() — تشخيص: يقرأ آخر الرسائل دون إرسال للباكئند ودون تعديل seen.
+   * مفيد للتحقّق ممّا يراه السكرابر فعلاً حين تظهر رسائل جديدة لكن لا تُجلَب.
+   */
+  async peek() {
+    if (!this.page) return { ok: false, error: 'no_page', state: this.state };
+    let messages = [];
+    try {
+      messages = await this._readLastMessages();
+    } catch (e) {
+      return { ok: false, error: e.message, state: this.state };
+    }
+    const sample = messages.slice(-10).map((m) => ({
+      direction: m.direction,
+      timestamp: m.timestamp,
+      hash: m.hash,
+      in_seen: this.seen.has(m.hash),
+      text_preview: (m.text || '').slice(0, 200),
+    }));
+    return {
+      ok: true,
+      state: this.state,
+      wrappers_count: this.wrappersCountLastTick,
+      readable_count: messages.length,
+      seen_count: this.seen.size,
+      active_selectors: this._activeSelectors,
+      sample,
     };
   }
 
@@ -617,6 +648,7 @@ export class Scraper {
 
     // hash مستقر: نعتمد على (text + timestamp). text لكويت ترك يحوي Tutar و Islem Zamani
     // وهي فريدة عملياً لكل رسالة.
+    this.wrappersCountLastTick = raws.length;
     return raws
       .filter((m) => m.text && m.text.length > 5)
       .map((m) => {

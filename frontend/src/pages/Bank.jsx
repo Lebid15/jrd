@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff, Upload, Filter } from 'lucide-react';
+import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff, Filter } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -26,9 +26,8 @@ export default function Bank() {
   // ─── حالة Google Messages scraper ─────
   const [gmsgStatus, setGmsgStatus] = useState(null);
   const [gmsgBusy, setGmsgBusy] = useState(false);
-  const [gmsgSessionInfo, setGmsgSessionInfo] = useState(null);
-  const [gmsgUploadBusy, setGmsgUploadBusy] = useState(false);
-  const [gmsgUploadProgress, setGmsgUploadProgress] = useState(0);
+  const [gmsgPeek, setGmsgPeek] = useState(null);
+  const [gmsgPeekBusy, setGmsgPeekBusy] = useState(false);
 
   // ─── فلترة سجل المعاملات ─────
   const emptyFilters = { from: '', to: '', direction: '', min_amount: '', max_amount: '', q: '' };
@@ -93,12 +92,8 @@ export default function Bank() {
   // ─── Google Messages scraper status ─────────────────────────────────────
   const loadGmsgStatus = useCallback(async () => {
     try {
-      const [s, info] = await Promise.allSettled([
-        api.get('/internal/bank-message/status'),
-        api.get('/internal/bank-message/session-info'),
-      ]);
-      setGmsgStatus(s.status === 'fulfilled' ? s.value.data : { reachable: false, error: 'load_failed' });
-      setGmsgSessionInfo(info.status === 'fulfilled' ? info.value.data : null);
+      const r = await api.get('/internal/bank-message/status');
+      setGmsgStatus(r.data);
     } catch {
       setGmsgStatus({ reachable: false, error: 'load_failed' });
     }
@@ -137,32 +132,18 @@ export default function Bank() {
     }
   };
 
-  const uploadGmsgSession = async (file) => {
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.zip')) {
-      return toast.error('الملف يجب أن يكون .zip');
-    }
-    setGmsgUploadBusy(true);
-    setGmsgUploadProgress(0);
+  const runPeek = useCallback(async () => {
+    setGmsgPeekBusy(true);
     try {
-      const fd = new FormData();
-      fd.append('session', file);
-      await api.post('/internal/bank-message/upload-session', fd, {
-        timeout: 600000,
-        onUploadProgress: (e) => {
-          if (e.total) setGmsgUploadProgress(Math.round((e.loaded / e.total) * 100));
-        },
-      });
-      toast.success('تم رفع الجلسة — السيرفر يُعيد التشغيل…');
-      setTimeout(loadGmsgStatus, 3000);
-      setTimeout(loadGmsgStatus, 15000);
+      const r = await api.get('/internal/bank-message/peek');
+      setGmsgPeek(r.data);
     } catch (e) {
-      toast.error('فشل الرفع: ' + (e.response?.data?.error || e.message));
+      setGmsgPeek({ ok: false, error: e.response?.data?.error || e.message });
+      toast.warn('فشل التشخيص: ' + (e.response?.data?.error || e.message));
     } finally {
-      setGmsgUploadBusy(false);
-      setGmsgUploadProgress(0);
+      setGmsgPeekBusy(false);
     }
-  };
+  }, []);
 
   const runSmsTest = async () => {
     const text = smsTestText.trim();
@@ -252,13 +233,12 @@ export default function Bank() {
       {/* ─── بطاقة مصدر رسائل البنك (Google Messages Web) ─── */}
       <GmsgSourceCard
         status={gmsgStatus}
-        sessionInfo={gmsgSessionInfo}
         busy={gmsgBusy}
         onStart={startGmsg}
         onReload={recheckGmsg}
-        onUploadSession={uploadGmsgSession}
-        uploadBusy={gmsgUploadBusy}
-        uploadProgress={gmsgUploadProgress}
+        onPeek={runPeek}
+        peek={gmsgPeek}
+        peekBusy={gmsgPeekBusy}
       />
 
       {/* ─── لوحة تشخيص webhook ─── */}
@@ -712,7 +692,7 @@ function minutesAgo(iso) {
   return Math.round(ms / 60000);
 }
 
-function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUploadSession, uploadBusy, uploadProgress }) {
+function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, peek, peekBusy }) {
   const reachable = !!status?.reachable;
   const state = reachable ? (status?.state || 'idle') : 'offline';
   const cfg = GMSG_STATE_LABELS[state] || { label: state, color: 'bg-gray-100 text-gray-600 border-gray-200', icon: WifiOff };
@@ -720,17 +700,9 @@ function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUpload
 
   const lastMsgMin = minutesAgo(status?.last_message_at);
   const lastSeenMin = minutesAgo(status?.last_seen_at);
-  const sessionDaysAgo = sessionInfo?.uploaded_at
-    ? Math.floor((Date.now() - new Date(sessionInfo.uploaded_at).getTime()) / (24 * 3600 * 1000))
-    : null;
   const canStart = reachable && ['idle', 'stopped', 'error'].includes(state);
-  const fileInputRef = useRef(null);
-
-  const onPickFile = (e) => {
-    const f = e.target.files?.[0];
-    if (f) onUploadSession(f);
-    e.target.value = ''; // اسمح بإعادة اختيار نفس الملف
-  };
+  const wrappersCount = status?.wrappers_count_last_tick;
+  const seenCount = status?.seen_count;
 
   return (
     <div className="bg-white rounded-2xl shadow border border-gray-100 mb-6 p-4" dir="rtl">
@@ -785,22 +757,14 @@ function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUpload
               {lastMsgMin === null ? '—' : lastMsgMin === 0 ? 'الآن' : `قبل ${lastMsgMin} د`}
             </p>
           </div>
-        </div>
-      )}
-
-      {/* معلومة الجلسة المرفوعة */}
-      {sessionInfo?.uploaded_at ? (
-        <div className="text-xs text-gray-500 mb-3 flex items-center gap-2">
-          <CheckCircle2 size={14} className="text-green-500" />
-          آخر تجديد للجلسة: <strong className="text-gray-700">
-            {sessionDaysAgo === 0 ? 'اليوم' : `قبل ${sessionDaysAgo} يوم`}
-          </strong>
-          <span className="text-gray-400">({new Date(sessionInfo.uploaded_at).toLocaleString('ar-EG')})</span>
-        </div>
-      ) : (
-        <div className="text-xs text-orange-700 mb-3 bg-orange-50 border border-orange-200 rounded p-2">
-          <AlertTriangle size={14} className="inline ml-1" />
-          لم تُرفع جلسة Google Messages بعد على السيرفر. اتّبع الخطوات أدناه.
+          <div className="bg-gray-50 rounded p-2">
+            <p className="text-gray-400 mb-0.5">رسائل مرئية الآن</p>
+            <p className="font-bold text-gray-800">{wrappersCount ?? '—'}</p>
+          </div>
+          <div className="bg-gray-50 rounded p-2">
+            <p className="text-gray-400 mb-0.5">سجل seen</p>
+            <p className="font-bold text-gray-800">{seenCount ?? '—'}</p>
+          </div>
         </div>
       )}
 
@@ -808,7 +772,15 @@ function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUpload
       {reachable && state === 'session_expired' && (
         <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-xs text-orange-800 mb-3">
           <AlertTriangle size={14} className="inline ml-1" />
-          جلسة Google Messages انتهت. أعِد التجديد بالخطوات في الأسفل.
+          جلسة Google Messages انتهت. استخدم متصفّح Chromium المُضمّن أدناه لإعادة الإقران.
+        </div>
+      )}
+
+      {reachable && state === 'running' && wrappersCount === 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800 mb-3">
+          <AlertTriangle size={14} className="inline ml-1" />
+          الخدمة تعمل لكن لا يَرى أي رسائل (wrappers=0). غالباً <strong>تغيّرت selectors</strong>
+          في Google Messages. اضغط <strong>"تشخيص الجلب"</strong> لمعرفة ما يراه السكرابر.
         </div>
       )}
 
@@ -819,7 +791,7 @@ function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUpload
         </div>
       )}
 
-      {/* عرض QR Live من شاشة Chromium (للإقران من الواجهة بدون أي ZIP) */}
+      {/* عرض QR Live من شاشة Chromium (للإقران من الواجهة) */}
       {reachable && ['pairing', 'session_expired'].includes(state) && (
         <GmsgPairingQR onReload={onReload} />
       )}
@@ -835,55 +807,72 @@ function GmsgSourceCard({ status, sessionInfo, busy, onStart, onReload, onUpload
           بدء / إعادة تشغيل
         </button>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".zip"
-          className="hidden"
-          onChange={onPickFile}
-        />
         <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploadBusy}
-          className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 disabled:opacity-40"
+          onClick={onPeek}
+          disabled={peekBusy || !reachable}
+          className="bg-purple-600 text-white px-3 py-1.5 rounded text-sm hover:bg-purple-700 disabled:opacity-40"
+          title="يعرض آخر الرسائل التي يراها السكرابر مع علم seen"
         >
-          {uploadBusy
-            ? <><RefreshCw size={14} className="inline animate-spin ml-1" /> جارٍ الرفع {uploadProgress}%</>
-            : <><Upload size={14} className="inline ml-1" /> رفع / تجديد الجلسة (session.zip)</>
+          {peekBusy
+            ? <><RefreshCw size={14} className="inline animate-spin ml-1" /> جارٍ القراءة…</>
+            : <><Activity size={14} className="inline ml-1" /> تشخيص الجلب</>
           }
         </button>
       </div>
 
-      {/* شريط تقدّم الرفع */}
-      {uploadBusy && (
-        <div className="w-full bg-gray-100 rounded h-2 mb-3 overflow-hidden">
-          <div
-            className="bg-green-500 h-full transition-all"
-            style={{ width: `${uploadProgress}%` }}
-          />
+      {/* نتيجة التشخيص */}
+      {peek && (
+        <div className="text-xs bg-gray-50 border border-gray-200 rounded p-3 mb-2">
+          {peek.ok === false ? (
+            <div className="text-red-700">
+              <AlertTriangle size={14} className="inline ml-1" />
+              فشل التشخيص: {peek.error || 'unknown'} {peek.state ? `(state=${peek.state})` : ''}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-3 mb-2 text-gray-700">
+                <span>wrappers في الصفحة: <strong>{peek.wrappers_count ?? 0}</strong></span>
+                <span>قابل للقراءة (text&gt;5): <strong>{peek.readable_count ?? 0}</strong></span>
+                <span>seen: <strong>{peek.seen_count ?? 0}</strong></span>
+              </div>
+              {peek.active_selectors && (
+                <div className="text-gray-500 mb-2" dir="ltr">
+                  selectors: list_shell=<code>{peek.active_selectors.list_shell || '—'}</code>{' '}
+                  / wrapper=<code>{peek.active_selectors.message_wrapper || '—'}</code>
+                </div>
+              )}
+              {Array.isArray(peek.sample) && peek.sample.length > 0 ? (
+                <div className="space-y-1">
+                  {peek.sample.map((m, i) => (
+                    <div
+                      key={i}
+                      className={`p-2 rounded border ${m.in_seen ? 'bg-gray-100 border-gray-200 text-gray-500' : 'bg-white border-blue-200'}`}
+                    >
+                      <div className="flex justify-between items-center mb-1 text-[10px]">
+                        <span className="font-bold">
+                          {m.direction || '—'} {m.in_seen && '· seen'}
+                        </span>
+                        <span className="text-gray-400">{m.timestamp || '—'}</span>
+                      </div>
+                      <div className="text-gray-700 whitespace-pre-wrap break-words leading-relaxed">
+                        {m.text_preview || '<empty>'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-orange-700">
+                  لا توجد رسائل مرئية. تحقّق من فتح المحادثة وأن selectors لا تزال صحيحة.
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
-      {/* تعليمات التجديد — مطويّة */}
-      <details className="text-xs text-gray-600 bg-gray-50 rounded p-2">
-        <summary className="cursor-pointer font-bold text-gray-700">
-          كيف أُجدّد الجلسة؟ (اتبع الخطوات عند انتهاء الجلسة)
-        </summary>
-        <ol className="list-decimal list-inside mt-2 mr-2 space-y-1 leading-relaxed">
-          <li>على جهازك، افتح PowerShell:
-            <pre className="bg-white border border-gray-200 rounded p-2 mt-1" dir="ltr">cd messages-scraper
-Remove-Item -Recurse -Force browser-data
-npm run spike</pre>
-          </li>
-          <li>ستفتح نافذة Chromium → سجّل دخول إلى Google → اربط Google Messages بـ QR من جوالك.</li>
-          <li>بعد ظهور آخر رسالة في الـ console، اضغط Ctrl+C لإغلاق المتصفّح.</li>
-          <li>اضغط المجلد إلى ملف <code className="bg-white border px-1">session.zip</code>:
-            <pre className="bg-white border border-gray-200 rounded p-2 mt-1" dir="ltr">.\scripts\pack-session.ps1</pre>
-          </li>
-          <li>ارجع إلى هذه الصفحة → اضغط <strong>"رفع / تجديد الجلسة"</strong> → اختر <code className="bg-white border px-1">session.zip</code>.</li>
-          <li>السيرفر سيستبدل الجلسة ويُعيد التشغيل تلقائياً. خلال ~30 ثانية تتحوّل الحالة لـ <strong>"يعمل"</strong>.</li>
-        </ol>
-      </details>
+      <p className="text-[10px] text-gray-400 leading-relaxed">
+        إن انتهت الجلسة (session_expired) ظهر متصفّح Chromium أعلاه — أكمل الإقران مباشرة من الواجهة. لا حاجة لرفع أي ملف.
+      </p>
     </div>
   );
 }
