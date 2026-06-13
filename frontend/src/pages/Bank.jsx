@@ -28,6 +28,8 @@ export default function Bank() {
   const [gmsgBusy, setGmsgBusy] = useState(false);
   const [gmsgPeek, setGmsgPeek] = useState(null);
   const [gmsgPeekBusy, setGmsgPeekBusy] = useState(false);
+  const [gmsgReplayBusy, setGmsgReplayBusy] = useState(false);
+  const [gmsgReplay, setGmsgReplay] = useState(null);
 
   // ─── فلترة سجل المعاملات ─────
   const emptyFilters = { from: '', to: '', direction: '', min_amount: '', max_amount: '', q: '' };
@@ -172,6 +174,24 @@ export default function Bank() {
     }
   }, [loadGmsgStatus]);
 
+  const replayGmsg = useCallback(async () => {
+    setGmsgReplayBusy(true);
+    try {
+      const r = await api.post('/internal/bank-message/replay');
+      setGmsgReplay(r.data);
+      const applied = (r.data?.results || []).filter(x => x.applied).length;
+      const total = r.data?.scanned || 0;
+      if (applied > 0) toast.success(`تمّ تطبيق ${applied} رسالة على الرصيد`);
+      else toast.info(`تمّ فحص ${total} رسالة — لا جديد لتطبيقه`);
+      setTimeout(loadDiagnostics, 500);
+    } catch (e) {
+      setGmsgReplay({ ok: false, error: e.response?.data?.error || e.message });
+      toast.error('فشل الإعادة: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setGmsgReplayBusy(false);
+    }
+  }, [loadDiagnostics]);
+
   const runSmsTest = async () => {
     const text = smsTestText.trim();
     if (!text) return toast.error('الصق نص الرسالة أوّلاً');
@@ -266,8 +286,11 @@ export default function Bank() {
         onPeek={runPeek}
         onPause={pauseGmsg}
         onResume={resumeGmsg}
+        onReplay={replayGmsg}
         peek={gmsgPeek}
         peekBusy={gmsgPeekBusy}
+        replay={gmsgReplay}
+        replayBusy={gmsgReplayBusy}
       />
 
       {/* ─── لوحة تشخيص webhook ─── */}
@@ -536,17 +559,11 @@ function DiagnosticsPanel({
         className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <Activity className="text-blue-500" size={20} />
-          <span className="font-bold text-gray-700">تشخيص استقبال SMS</span>
-          {!open && lastLog && (
-            <span className={`text-xs px-2 py-0.5 rounded border ${STATUS_BADGE[lastLog.parse_status]?.color || 'bg-gray-50 text-gray-600 border-gray-200'}`}>
-              آخر طلب: {STATUS_BADGE[lastLog.parse_status]?.label || lastLog.parse_status}
-              {minutesSince !== null && ` — قبل ${minutesSince} د`}
-            </span>
-          )}
-          {!open && !lastLog && (
+          <Activity className="text-gray-400" size={20} />
+          <span className="font-bold text-gray-500">قناة SMS Forwarder القديمة (اختيارية)</span>
+          {!open && (
             <span className="text-xs px-2 py-0.5 rounded border bg-gray-50 text-gray-500 border-gray-200">
-              لم يصل أي طلب بعد
+              مصدر بديل عبر تطبيق الهاتف — تجاهلها إن كنت تستعمل Google Messages
             </span>
           )}
         </div>
@@ -722,7 +739,7 @@ function minutesAgo(iso) {
   return Math.round(ms / 60000);
 }
 
-function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, onPause, onResume, peek, peekBusy }) {
+function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, onPause, onResume, onReplay, peek, peekBusy, replay, replayBusy }) {
   const reachable = !!status?.reachable;
   const paused = !!status?.paused;
   const rawState = status?.state || 'idle';
@@ -839,16 +856,16 @@ function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, onPause, onRe
           بدء / إعادة تشغيل
         </button>
 
-        {/* Pause/Resume — يظهر حين نحتاج لإتمام تسجيل دخول Google يدوياً */}
-        {reachable && !paused && ['pairing', 'session_expired', 'opening_chat', 'error'].includes(rawState) && (
+        {/* Pause/Resume — متاح دائماً ما دام السكرابر حيّاً (للسماح بتسجيل دخول Google يدوياً) */}
+        {reachable && !paused && !['idle', 'stopped'].includes(rawState) && (
           <button
             onClick={onPause}
             disabled={busy}
             className="bg-amber-600 text-white px-3 py-1.5 rounded text-sm hover:bg-amber-700 disabled:opacity-40"
-            title="إيقاف محاولات فتح المحادثة حتّى أكمل تسجيل دخول Google يدوياً"
+            title="أوقف السكرابر لتسجل دخول Google يدوياً، ثم اضغط استئناف"
           >
             <Pause size={14} className="inline ml-1" />
-            إيقاف مؤقّت (للتسجيل اليدوي)
+            إيقاف مؤقّت
           </button>
         )}
         {paused && (
@@ -860,6 +877,21 @@ function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, onPause, onRe
           >
             <Play size={14} className="inline ml-1" />
             استئناف الجلب التلقائي
+          </button>
+        )}
+
+        {/* Replay — يجبر إعادة معالجة الرسائل المرئية لاستعادة رسالة بُلِعت */}
+        {reachable && !paused && (
+          <button
+            onClick={onReplay}
+            disabled={replayBusy || busy}
+            className="bg-rose-600 text-white px-3 py-1.5 rounded text-sm hover:bg-rose-700 disabled:opacity-40"
+            title="يجبر إرسال كل الرسائل المرئية للباكئند (لاستعادة رسالة بُلِعت)"
+          >
+            {replayBusy
+              ? <><RefreshCw size={14} className="inline animate-spin ml-1" /> جارٍ الإرسال…</>
+              : <><RefreshCw size={14} className="inline ml-1" /> إعادة معالجة المرئي</>
+            }
           </button>
         )}
 
@@ -929,6 +961,47 @@ function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, onPause, onRe
       <p className="text-[10px] text-gray-400 leading-relaxed">
         إن انتهت الجلسة (session_expired) ظهر متصفّح Chromium أعلاه — أكمل الإقران مباشرة من الواجهة. لا حاجة لرفع أي ملف.
       </p>
+
+      {/* نتيجة Replay */}
+      {replay && (
+        <div className="mt-2 text-xs bg-rose-50 border border-rose-200 rounded p-3">
+          {replay.ok === false ? (
+            <div className="text-red-700">
+              <AlertTriangle size={14} className="inline ml-1" />
+              فشل: {replay.error || 'unknown'}
+            </div>
+          ) : (
+            <>
+              <div className="font-bold mb-1 text-rose-800">
+                إعادة معالجة: فُحِصت {replay.scanned ?? 0} رسالة
+              </div>
+              {Array.isArray(replay.results) && replay.results.length > 0 ? (
+                <div className="space-y-1">
+                  {replay.results.map((r, i) => (
+                    <div
+                      key={i}
+                      className={`p-1.5 rounded border ${r.applied ? 'bg-green-50 border-green-200' : r.error ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}
+                    >
+                      <div className="flex justify-between text-[10px] mb-1">
+                        <span className="font-bold">
+                          {r.applied ? '✓ طُبِّقت' : r.error ? '✗ خطأ' : '— تجاهَلها الباكئند'}
+                        </span>
+                        <span className="text-gray-400" dir="ltr">{r.hash}</span>
+                      </div>
+                      <div className="text-gray-700 whitespace-pre-wrap break-words text-[11px]">
+                        {r.text_preview || '<empty>'}
+                      </div>
+                      {r.error && <div className="text-red-700 text-[10px] mt-1">{r.error}</div>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-gray-600">لا رسائل واردة مرئية للمعالجة.</div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

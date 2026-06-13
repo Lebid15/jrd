@@ -569,14 +569,63 @@ export class Scraper {
     } catch (_) { /* ignore */ }
   }
 
-  /** يقرأ آخر N رسالة ويُعَلِّمها seen دون إرسال (نقطة الصفر للـ polling). */
+  /**
+   * يقرأ آخر N رسالة ويُعَلِّمها seen دون إرسال (نقطة الصفر للـ polling).
+   * يعمل فقط عند البدء التماماً الجديد (seen فارغ) — لمنع بلع الرسائل
+   * التي تصل أثناء حلقات الاسترداد (error → recover → bootstrap كان يأكلها).
+   */
   async _bootstrap() {
+    if (this.seen.size > 0) {
+      log.info('bootstrap', `skipped — seen already has ${this.seen.size} entries (recovery, not fresh start)`);
+      return;
+    }
     const messages = await this._readLastMessages();
     for (const m of messages) {
       this.seen.add(m.hash);
     }
     this._saveSeen();
-    log.info('bootstrap', `marked ${messages.length} existing messages as seen`);
+    log.info('bootstrap', `marked ${messages.length} existing messages as seen (fresh start)`);
+  }
+
+  /**
+   * replay() — يجبر إعادة معالجة كلّ الرسائل الواردة المرئية حالياً،
+   * متجاوزاً seen. مفيد لاستعادة رسالة بُلِعت أثناء حلقة استرداد سابقة
+   * (bootstrap قديم وضعها في seen دون إرسالها للباكئند).
+   * يُرسلها للباكئند ثم يضيفها إلى seen.
+   */
+  async replay() {
+    if (!this.page) return { ok: false, error: 'no_page', state: this.state };
+    let messages = [];
+    try {
+      messages = await this._readLastMessages();
+    } catch (e) {
+      return { ok: false, error: e.message, state: this.state };
+    }
+    const results = [];
+    for (const m of messages) {
+      if (m.direction === 'outgoing') {
+        this.seen.add(m.hash);
+        continue;
+      }
+      try {
+        const resp = await sendToBackend({
+          text: m.text,
+          occurredAt: m.timestamp,
+          externalId: m.hash,
+          contactName: config.targetContact,
+        });
+        this.seen.add(m.hash);
+        this.lastMessageAt = new Date().toISOString();
+        this.messagesProcessedTotal++;
+        results.push({ hash: m.hash.slice(0, 12), applied: !!resp.applied, text_preview: (m.text || '').slice(0, 80) });
+        log.info('replay', 'sent', { applied: resp.applied, hash: m.hash.slice(0, 12) });
+      } catch (e) {
+        results.push({ hash: m.hash.slice(0, 12), error: e.message, text_preview: (m.text || '').slice(0, 80) });
+        log.warn('replay', 'failed', e.message);
+      }
+    }
+    this._saveSeen();
+    return { ok: true, state: this.state, scanned: messages.length, results };
   }
 
   _scheduleNextPoll() {

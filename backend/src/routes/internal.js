@@ -845,4 +845,7 @@ router.get('/bank-message/peek', (req, res) => _proxyToScraper(req, res, '/peek'
 router.post('/bank-message/pause',  (req, res) => _proxyToScraper(req, res, '/pause'));
 router.post('/bank-message/resume', (req, res) => _proxyToScraper(req, res, '/resume'));
 
+// إعادة معالجة كل الرسائل الواردة المرئية حالياً (تجاوز seen) — لاستعادة رسائل بُلِعت.
+router.post('/bank-message/replay', (req, res) => _proxyToScraper(req, res, '/replay'));
+
 export default router;

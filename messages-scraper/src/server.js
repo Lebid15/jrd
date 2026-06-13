@@ -109,6 +109,19 @@ app.post('/resume', internalAuth, async (req, res) => {
   }
 });
 
+/**
+ * POST /replay → يجبر إعادة معالجة كل الرسائل الواردة المرئية حالياً،
+ * متجاوزاً seen. لاستعادة رسائل بُلِعت أثناء حلقة استرداد سابقة.
+ */
+app.post('/replay', internalAuth, async (req, res) => {
+  try {
+    const out = await scraper.replay();
+    res.status(out.ok === false ? 503 : 200).json(out);
+  } catch (e) {
+    res.status(500).json({ error: e.message, state: scraper.state });
+  }
+});
+
 // تشخيص: ماذا يعرض Chromium الآن (URL + title + نص الـ body المختصر)؟
 app.get('/debug-page', internalAuth, async (req, res) => {  try {
     const page = scraper.page;
