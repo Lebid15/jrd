@@ -893,6 +893,229 @@ ssh -i $HOME\.ssh\jrd_hetzner_desktop -o IdentitiesOnly=yes root@167.233.124.62
 
 ---
 
+## 17) جلسة 14 يونيو 2026 — استكمال هجرة Hetzner + إصلاحات gmsg scraper
+
+> **الموضوع**: استقبال رسائل البنك توقّف بعد الهجرة لـ Hetzner. تتبّع المشكلة إلى ثلاث طبقات.
+
+### 17.1) الأعراض المُبلَّغ عنها
+
+1. صفحة `/bank` تُظهر السكرابر "يعمل" مع `messages_processed=0`.
+2. زر "تشخيص الجلب" يُظهر الرسائل (مثل 10 TL و 11 TL) لكن الرصيد لا يتحدّث ولا تُسجَّل المعاملة.
+3. لوحة "تشخيص استقبال SMS" تُظهر "لم يصل أي طلب منذ 2637 دقيقة" + تحذير `SMS_WEBHOOK_SECRET` غير مضبوط.
+4. حالة `session_expired` المتكرّرة بعد تغيير Google لآلية تسجيل الدخول.
+5. لا يوجد زر إيقاف للسكرابر أثناء محاولة تسجيل دخول Google يدوياً.
+
+### 17.2) السبب الجذري (السبب الفعلي للرصيد لا يتحدّث) ⭐
+
+> **اكتُشف فقط بعد فحص `bank_sms_log` في DB الإنتاج.**
+
+`messages-scraper` يُرسل لـ backend الـ ingest endpoint مع `tenant_id` من متغيّر بيئة `GMSG_TENANT_ID`. هذا المتغيّر **لم يُنقل من Railway إلى Hetzner**، فاستخدم القيمة الافتراضية `1` في `messages-scraper/src/config.js`.
+
+```js
+tenantId: int('GMSG_TENANT_ID', 1),
+```
+
+لكن قاعدة بيانات الإنتاج فيها مستأجران:
+- `tenant_id=1` "Default" — **لا يحوي أي بنك مُفعَّل**
+- `tenant_id=2` "ziyad" — يحوي البنك المُفعَّل `id=8` "كويت بنك"
+
+النتيجة: 75600+ سطر في `bank_sms_log` كلّها `parse_status=no_bank_item, tenant_id=1, sender=KUVEYT TURK` — السكرابر يُرسل بنجاح، الباكئند يرفض لأنه يبحث عن بنك في tenant الخطأ.
+
+#### الحل المُطبَّق
+
+```bash
+# على Hetzner: إضافة السطر إلى /srv/jrd/app/deploy/.env
+GMSG_TENANT_ID=2
+
+# إعادة تشغيل
+docker compose -f /srv/jrd/app/deploy/docker-compose.yml up -d --force-recreate app
+```
+
+وُثِّق المتغيّر كتعليق إجباري داخل `deploy/docker-compose.yml` لمنع تكرار الخطأ:
+
+```yaml
+# ملاحظة: GMSG_TENANT_ID و INTERNAL_API_KEY و JWT_SECRET … تأتي من ./.env
+# حافظ على GMSG_TENANT_ID مساوياً لمعرّف المستأجر الذي يحوي بَنك KUVEYT TURK المُفعَّل
+# (وإلا يأتي parse_status=no_bank_item ولا يُحدَّث الرصيد).
+```
+
+**درس عام**: عند هجرة أي خدمة جديدة، يجب نسخ كل `*_TENANT_ID` و `*_SECRET` و `INTERNAL_*` من Railway env إلى `deploy/.env`.
+
+### 17.3) خلل ثانوي: `_bootstrap()` يبتلع الرسائل أثناء الاسترداد
+
+في `messages-scraper/src/scraper.js`، عند كل دورة استرداد (`error → _tryRecoverPairing()`)، كان `_bootstrap()` يُعاد استدعاؤه:
+
+```js
+async _bootstrap() {
+  const messages = await this._readLastMessages();
+  for (const m of messages) this.seen.add(m.hash);  // ← يبتلعها بدون إرسال
+  this._saveSeen();
+}
+```
+
+أي رسالة تصل أثناء `error → recover` (شائع حين تنتهي جلسة Google) كانت تُضاف لـ `seen` بدون أن تذهب للباكئند → ضائعة للأبد.
+
+#### الحل: bootstrap مرّة واحدة فقط + endpoint `replay`
+
+```js
+async _bootstrap() {
+  if (this.seen.size > 0) {
+    log.info('bootstrap', `skipped — seen already has ${this.seen.size} entries`);
+    return;
+  }
+  // ... فقط للبداية الجديدة
+}
+
+/** يجبر إعادة معالجة كل الرسائل الواردة المرئية حالياً، متجاوزاً seen. */
+async replay() {
+  const messages = await this._readLastMessages();
+  for (const m of messages) {
+    if (m.direction === 'outgoing') { this.seen.add(m.hash); continue; }
+    const resp = await sendToBackend({ text: m.text, occurredAt: m.timestamp, externalId: m.hash, contactName: config.targetContact });
+    this.seen.add(m.hash);
+    // ...
+  }
+}
+```
+
+- `POST /replay` في `messages-scraper/src/server.js` (auth: `X-Internal-Api-Key`).
+- Proxy `POST /api/internal/bank-message/replay` في `backend/src/routes/internal.js`.
+- زر وردي **"إعادة معالجة المرئي"** في `frontend/src/pages/Bank.jsx` يعرض النتائج (مُطبَّقة / خطأ / تجاهَلها الباكئند).
+
+### 17.4) قدرة الإيقاف المؤقّت (Pause/Resume) لإتمام تسجيل دخول Google يدوياً
+
+Google ألغى الإقران بـ QR فقط — الآن يتطلب تسجيل دخول كامل بحساب Google. لكن watchdog كان ينقر على المحادثة كل 8 ثوان، فيقطع نافذة sign-in.
+
+#### الحل
+
+في `Scraper`:
+
+```js
+pause() {
+  if (this.pollTimer) clearTimeout(this.pollTimer);
+  if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+  this.pollTimer = null; this.watchdogTimer = null;
+  this.paused = true;
+  return { ok: true, state: this.state, paused: true };
+}
+
+async resume() {
+  this.paused = false;
+  this._startWatchdog();
+  const recovered = await this._tryRecoverPairing();
+  return { ok: true, state: this.state, recovered };
+}
+```
+
+- `_tick()` و watchdog يخرجان مبكراً إذا `this.paused`.
+- `status()` يُرجع `paused: this.paused`.
+- `POST /pause` + `POST /resume` في server.js.
+- Proxy في backend internal.js.
+- زر كهرماني "إيقاف مؤقت" في Bank.jsx يظهر في **كل الحالات الفعّالة** (وليس فقط `pairing/error` كما في المحاولة الأولى).
+- زر أخضر "استئناف الجلب التلقائي" يظهر حين `paused=true`.
+- label جديدة `paused` (لون نيلي) في `GMSG_STATE_LABELS`.
+
+### 17.5) Endpoint تشخيصي `/peek`
+
+`/peek` يقرأ آخر الرسائل **بدون إرسال أو تعديل seen** — مفيد للتحقّق ممّا يراه السكرابر دون التأثير على الحالة.
+
+```js
+async peek() {
+  const messages = await this._readLastMessages();
+  return {
+    ok: true, state: this.state,
+    wrappers_count: this.wrappersCountLastTick,
+    readable_count: messages.length,
+    seen_count: this.seen.size,
+    active_selectors: this._activeSelectors,
+    sample: messages.slice(-10).map(m => ({
+      direction: m.direction, timestamp: m.timestamp, hash: m.hash,
+      in_seen: this.seen.has(m.hash),
+      text_preview: (m.text || '').slice(0, 200),
+    })),
+  };
+}
+```
+
+- زر بنفسجي **"تشخيص الجلب"** في Bank.jsx مع عرض تفصيلي للعيّنة (timestamp + direction + in_seen + preview).
+- بطاقة الكارد تُظهر الآن أيضاً `wrappers_count_last_tick` و `seen_count` (لتمييز "السكرابر لا يرى شيئاً" vs "يرى لكن لا يُرسل").
+- تحذير أصفر عند `state=running` و `wrappers=0`: "غالباً تغيّرت selectors".
+
+### 17.6) إزالة قناة `session.zip` القديمة
+
+الميزة القديمة (رفع جلسة Playwright مُصدَّرة من جهاز محلي) لم تعد مستخدمة بعد إضافة التفاعل المباشر مع Chromium من الواجهة.
+
+**حُذف**:
+- `messages-scraper/scripts/pack-session.ps1` (والمجلّد).
+- `POST /api/internal/bank-message/upload-session` + `GET /session-info`.
+- imports: `multer`, `AdmZip`, `path`, `fs`, `os` من `backend/src/routes/internal.js`.
+- State + handler `uploadGmsgSession` + `gmsgSessionInfo` من `Bank.jsx`.
+- إعادة كتابة `messages-scraper/README.md` لتوضيح أنّ الإقران live فقط.
+
+### 17.7) إعادة تسمية لوحة SMS Forwarder القديمة
+
+لوحة "تشخيص استقبال SMS" تعمل على قناة بديلة (تطبيق SMS Forwarder على هاتف Android يُرسل webhook). لم تعد مستخدمة بعد قناة Google Messages، لكن الكود قائم. أُعيدت تسميتها لتُوضّح:
+
+> **"قناة SMS Forwarder القديمة (اختيارية)"** — تُجاهلها إن كنت تستعمل Google Messages.
+
+التحذير الموجود في الصورة (`SMS_WEBHOOK_SECRET غير مضبوط في Railway`) **غير ذي صلة** — هو إنذار من تلك القناة القديمة فقط. القناة الفعّالة (gmsg) لا تعتمد على هذا السرّ.
+
+### 17.8) ملخّص الملفات المُعدَّلة
+
+| الملف | التغيير |
+|-------|---------|
+| `messages-scraper/src/scraper.js` | `paused`, `pause()`, `resume()`, `peek()`, `replay()`, `_bootstrap()` skip-on-recovery, `wrappersCountLastTick`, `_tick`/watchdog يحترمان `paused` |
+| `messages-scraper/src/server.js` | endpoints `/peek`, `/pause`, `/resume`, `/replay` (كلّها `internalAuth`) |
+| `messages-scraper/scripts/pack-session.ps1` | **DELETED** |
+| `messages-scraper/README.md` | rewrite — live pairing فقط |
+| `backend/src/routes/internal.js` | proxies: `/bank-message/peek`, `/pause`, `/resume`, `/replay`. حُذف upload-session + session-info + imports المتعلّقة |
+| `frontend/src/pages/Bank.jsx` | أزرار peek/pause/resume/replay، state جديدة، عرض نتائج peek + replay، إعادة تسمية SMS panel، حُذف upload UI |
+| `deploy/docker-compose.yml` | تعليق توثيقي يفرض `GMSG_TENANT_ID` |
+| `deploy/keys/hetzner-jrd.pub` (جديد) | مفتاح اللاب توب الثاني |
+| `deploy/keys/fix-ssh.sh` | تثبيت كل `deploy/keys/*.pub` في `authorized_keys` مع dedup |
+| `/srv/jrd/app/deploy/.env` (Hetzner، خارج Git) | **أُضيف `GMSG_TENANT_ID=2`** |
+
+Commits:
+- `161760a` — SSH key + قناة peek
+- `f67ef56` — pause/resume
+- `18bdfb6` — bootstrap fix + replay
+- `0d5c8f6` — توثيق GMSG_TENANT_ID
+
+### 17.9) خطوات تشغيل البنك بعد reboot أو إعادة نشر
+
+1. افتح `https://alaya.ahlacard.net/bank`.
+2. إن الحالة ليست `running`، اضغط **"بدء/إعادة تشغيل"**.
+3. إن ظهرت شاشة Google sign-in في المتصفّح المضمَّن:
+   - اضغط **"إيقاف مؤقت"** (يوقف watchdog كي لا يقاطعك).
+   - أكمل تسجيل الدخول (Gmail + كلمة سر + 2FA إن لزم) عبر حقول الإدخال أسفل لقطة الشاشة.
+   - افتح محادثة KUVEYT TURK يدوياً إن أمكن.
+   - اضغط **"استئناف الجلب التلقائي"**.
+4. اضغط **"تشخيص الجلب"** للتأكّد أن السكرابر يرى الرسائل (يجب أن يظهر wrappers > 0).
+5. إذا كانت هناك رسائل بُلِعت أثناء الإقران، اضغط الزر الوردي **"إعادة معالجة المرئي"**.
+6. من الآن فصاعداً، أي رسالة جديدة تُطبَّق تلقائياً.
+
+### 17.10) مفاتيح SSH وأمور التشغيل
+
+- المفتاح الجديد لهذا اللاب توب: `deploy/keys/hetzner-jrd.pub` (مكافئ: `~/.ssh/id_ed25519`).
+- المفتاح القديم لسطح المكتب: `deploy/keys/desktop.pub`.
+- `deploy/keys/fix-ssh.sh` يدمج الكل في `/root/.ssh/authorized_keys` بـ awk dedup.
+- الاتصال من هذا اللاب توب:
+  ```powershell
+  & 'C:\Windows\System32\OpenSSH\ssh.exe' -i $HOME\.ssh\id_ed25519 -o IdentitiesOnly=yes root@167.233.124.62
+  ```
+- النشر:
+  ```powershell
+  & 'C:\Windows\System32\OpenSSH\ssh.exe' -i $HOME\.ssh\id_ed25519 -o IdentitiesOnly=yes root@167.233.124.62 "cd /srv/jrd/app && git pull && bash deploy/deploy.sh"
+  ```
+
+### 17.11) ما زال مفتوحاً (للمحادثة القادمة)
+
+- **إضافة بنك ثانٍ** غير كويت ترك (نُقاش منفصل).
+- (اختياري) حذف لوحة SMS Forwarder بالكامل إن تأكّدنا من عدم الحاجة لها.
+- (اختياري) جعل `GMSG_TENANT_ID` يأتي من قاعدة البيانات تلقائياً (يختار أوّل tenant فيه بنك مُفعَّل) بدل متغيّر بيئة.
+
+---
+
 ## 13.2) نشر Docker stack
 
 ### نسخ المشروع وبناء الصور
@@ -1162,3 +1385,5 @@ cp /srv/jrd/data/jrd.db /srv/jrd/data/backups/jrd.db.$(date +%Y%m%d-%H%M%S)
 docker cp /srv/jrd/app/backend/scripts/list-tenants.js jrd-app:/app/backend/scripts/list-tenants.js
 docker exec jrd-app node backend/scripts/list-tenants.js
 ```
+
+
