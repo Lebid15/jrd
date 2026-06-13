@@ -32,7 +32,10 @@ export class Scraper {
     this.lastError = null;
     this.lastSeenAt = null;            // آخر مرّة استطلعنا فيها بنجاح
     this.lastMessageAt = null;         // آخر رسالة جديدة عُولجت
-    this.messagesProcessedTotal = 0;    this.wrappersCountLastTick = 0;    // تشخيصي: عدد wrappers الرسائل المدرُوسة في آخر dt    this.context = null;
+    this.messagesProcessedTotal = 0;
+    this.wrappersCountLastTick = 0;    // تشخيصي: عدد wrappers الرسائل المدروسة في آخر tick
+    this.paused = false;               // وضع إيقاف مؤقّت (الواجهة تستخدمه للسماح بتسجيل دخول Google)
+    this.context = null;
     this.page = null;
     this.pollTimer = null;
     this.watchdogTimer = null;        // حارس ذاتي الاستشفاء (يعمل دائماً)
@@ -79,6 +82,7 @@ export class Scraper {
       messages_processed_total: this.messagesProcessedTotal,
       wrappers_count_last_tick: this.wrappersCountLastTick,
       seen_count: this.seen.size,
+      paused: this.paused,
       active_selectors: this._activeSelectors,
       target_contact: config.targetContact,
       poll_interval_ms: config.pollIntervalMs,
@@ -249,7 +253,41 @@ export class Scraper {
     this.context = null;
     this.page = null;
     this.state = 'stopped';
+    this.paused = false;
     return { ok: true };
+  }
+
+  /**
+   * pause() — يوقف polling + watchdog دون إغلاق المتصفّح.
+   * مفيد حين يريد المستخدم تسجيل دخول Google يدوياً من الواجهة
+   * دون أن يقاطعه السكرابر بمحاولات فتح المحادثة.
+   */
+  pause() {
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+    if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+    this.watchdogTimer = null;
+    this.paused = true;
+    this.lastError = null;
+    log.info('pause', 'paused — browser kept open');
+    return { ok: true, state: this.state, paused: true };
+  }
+
+  /**
+   * resume() — يعيد تشغيل watchdog ويحاول الاسترداد فوراً.
+   */
+  async resume() {
+    this.paused = false;
+    log.info('resume', 'resumed');
+    this._startWatchdog();
+    // جرّب الاسترداد الفوري (في حال اكتمل تسجيل الدخول والمحادثة جاهزة)
+    let recovered = false;
+    try {
+      recovered = await this._tryRecoverPairing();
+    } catch (e) {
+      log.warn('resume', 'recover failed', e.message);
+    }
+    return { ok: true, state: this.state, recovered };
   }
 
   // ─── watchdog ذاتي الاستشفاء ────────────────────────────────
@@ -264,7 +302,7 @@ export class Scraper {
     const TICK = 8000;
     const fire = async () => {
       try {
-        await this._watchdogTick();
+        if (!this.paused) await this._watchdogTick();
       } catch (e) {
         log.warn('watchdog', 'tick error', e.message);
       } finally {
@@ -551,6 +589,7 @@ export class Scraper {
   }
 
   async _tick() {
+    if (this.paused) return;
     if (this.state !== 'running') return;
     // فحص انتهاء الجلسة: إن اختفت قائمة المحادثات أو ظهرت صفحة QR.
     const shellExists = await this.page.locator(this._activeSelectors.list_shell).count().catch(() => 0);

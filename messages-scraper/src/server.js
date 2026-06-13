@@ -89,6 +89,26 @@ app.get('/peek', internalAuth, async (req, res) => {
   }
 });
 
+/**
+ * POST /pause  → يوقف watchdog + polling دون إغلاق المتصفّح.
+ * يستعمله المستخدم من الواجهة حين يريد تسجيل دخول Google يدوياً دون أن
+ * يقاطعه السكرابر بمحاولات فتح المحادثة كل 8 ثوان.
+ */
+app.post('/pause', internalAuth, async (req, res) => {
+  res.json(scraper.pause());
+});
+
+/**
+ * POST /resume → يعيد تشغيل watchdog ويحاول الاسترداد فوراً.
+ */
+app.post('/resume', internalAuth, async (req, res) => {
+  try {
+    res.json(await scraper.resume());
+  } catch (e) {
+    res.status(500).json({ error: e.message, state: scraper.state });
+  }
+});
+
 // تشخيص: ماذا يعرض Chromium الآن (URL + title + نص الـ body المختصر)؟
 app.get('/debug-page', internalAuth, async (req, res) => {  try {
     const page = scraper.page;

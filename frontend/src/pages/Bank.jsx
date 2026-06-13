@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff, Filter } from 'lucide-react';
+import { RefreshCw, Trash2, ArrowDownCircle, ArrowUpCircle, Pencil, Check, X, Activity, ChevronDown, ChevronUp, Play, Pause, AlertTriangle, CheckCircle2, MessageSquare, Wifi, WifiOff, Filter } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -145,6 +145,33 @@ export default function Bank() {
     }
   }, []);
 
+  const pauseGmsg = useCallback(async () => {
+    setGmsgBusy(true);
+    try {
+      await api.post('/internal/bank-message/pause');
+      toast.info('تمّ إيقاف السكرابر مؤقّتاً — أكمِل تسجيل دخول Google');
+      setTimeout(loadGmsgStatus, 1000);
+    } catch (e) {
+      toast.error('فشل: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setGmsgBusy(false);
+    }
+  }, [loadGmsgStatus]);
+
+  const resumeGmsg = useCallback(async () => {
+    setGmsgBusy(true);
+    try {
+      const r = await api.post('/internal/bank-message/resume');
+      if (r.data?.recovered) toast.success('تمّ الاستئناف — يعمل الآن');
+      else toast.info('تمّ الاستئناف — السكرابر سيحاول الدخول تلقائياً');
+      setTimeout(loadGmsgStatus, 2000);
+    } catch (e) {
+      toast.error('فشل: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setGmsgBusy(false);
+    }
+  }, [loadGmsgStatus]);
+
   const runSmsTest = async () => {
     const text = smsTestText.trim();
     if (!text) return toast.error('الصق نص الرسالة أوّلاً');
@@ -237,6 +264,8 @@ export default function Bank() {
         onStart={startGmsg}
         onReload={recheckGmsg}
         onPeek={runPeek}
+        onPause={pauseGmsg}
+        onResume={resumeGmsg}
         peek={gmsgPeek}
         peekBusy={gmsgPeekBusy}
       />
@@ -683,6 +712,7 @@ const GMSG_STATE_LABELS = {
   session_expired: { label: 'انتهت الجلسة — أعد الإقران',  color: 'bg-orange-50 text-orange-700 border-orange-200', icon: AlertTriangle },
   error:           { label: 'خطأ',                        color: 'bg-red-50 text-red-700 border-red-200',         icon: AlertTriangle },
   stopped:         { label: 'متوقّف',                      color: 'bg-gray-100 text-gray-700 border-gray-200',     icon: WifiOff },
+  paused:          { label: 'إيقاف مؤقّت (أكمِل تسجيل الدخول يدوياً)', color: 'bg-indigo-50 text-indigo-700 border-indigo-200', icon: Pause },
 };
 
 function minutesAgo(iso) {
@@ -692,9 +722,11 @@ function minutesAgo(iso) {
   return Math.round(ms / 60000);
 }
 
-function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, peek, peekBusy }) {
+function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, onPause, onResume, peek, peekBusy }) {
   const reachable = !!status?.reachable;
-  const state = reachable ? (status?.state || 'idle') : 'offline';
+  const paused = !!status?.paused;
+  const rawState = status?.state || 'idle';
+  const state = reachable ? (paused ? 'paused' : rawState) : 'offline';
   const cfg = GMSG_STATE_LABELS[state] || { label: state, color: 'bg-gray-100 text-gray-600 border-gray-200', icon: WifiOff };
   const Icon = cfg.icon;
 
@@ -792,7 +824,7 @@ function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, peek, peekBus
       )}
 
       {/* عرض QR Live من شاشة Chromium (للإقران من الواجهة) */}
-      {reachable && ['pairing', 'session_expired'].includes(state) && (
+      {reachable && (['pairing', 'session_expired'].includes(rawState) || paused) && (
         <GmsgPairingQR onReload={onReload} />
       )}
 
@@ -800,12 +832,36 @@ function GmsgSourceCard({ status, busy, onStart, onReload, onPeek, peek, peekBus
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <button
           onClick={onStart}
-          disabled={busy || !canStart}
+          disabled={busy || (!canStart && !paused)}
           className="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-40"
         >
           {busy ? <RefreshCw size={14} className="inline animate-spin ml-1" /> : <Play size={14} className="inline ml-1" />}
           بدء / إعادة تشغيل
         </button>
+
+        {/* Pause/Resume — يظهر حين نحتاج لإتمام تسجيل دخول Google يدوياً */}
+        {reachable && !paused && ['pairing', 'session_expired', 'opening_chat', 'error'].includes(rawState) && (
+          <button
+            onClick={onPause}
+            disabled={busy}
+            className="bg-amber-600 text-white px-3 py-1.5 rounded text-sm hover:bg-amber-700 disabled:opacity-40"
+            title="إيقاف محاولات فتح المحادثة حتّى أكمل تسجيل دخول Google يدوياً"
+          >
+            <Pause size={14} className="inline ml-1" />
+            إيقاف مؤقّت (للتسجيل اليدوي)
+          </button>
+        )}
+        {paused && (
+          <button
+            onClick={onResume}
+            disabled={busy}
+            className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 disabled:opacity-40"
+            title="بعد إتمام تسجيل الدخول وظهور الرسائل اضغط استئناف"
+          >
+            <Play size={14} className="inline ml-1" />
+            استئناف الجلب التلقائي
+          </button>
+        )}
 
         <button
           onClick={onPeek}

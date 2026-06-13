@@ -841,4 +841,8 @@ router.get( '/bank-message/interact/url',    (req, res) => _proxyToScraper(req, 
 // تشخيص: يعرض آخر رسائل يراها السكرابر + wrappers_count + seen flags.
 router.get('/bank-message/peek', (req, res) => _proxyToScraper(req, res, '/peek'));
 
+// إيقاف مؤقّت / استئناف (للسماح بتسجيل دخول Google يدوياً من الواجهة).
+router.post('/bank-message/pause',  (req, res) => _proxyToScraper(req, res, '/pause'));
+router.post('/bank-message/resume', (req, res) => _proxyToScraper(req, res, '/resume'));
+
 export default router;
