@@ -153,7 +153,15 @@ export default function Dashboard() {
     );
   }
 
-  const providerItems = items.filter(i => i.type === 'provider' || i.type === 'bank');
+  const providerItems = items
+    .filter(i => i.type === 'provider' || i.type === 'bank')
+    .sort((a, b) => {
+      // znet أوّلاً، ثم بقية الأنواع بترتيبها الأصلي (sort_order → id)
+      const aZ = (a.api_provider_type || a.provider_type) === 'znet' ? 0 : 1;
+      const bZ = (b.api_provider_type || b.provider_type) === 'znet' ? 0 : 1;
+      if (aZ !== bZ) return aZ - bZ;
+      return (a.sort_order ?? 0) - (b.sort_order ?? 0) || (a.id - b.id);
+    });
   const manualItems = items.filter(i => i.type !== 'provider' && i.type !== 'bank');
 
   return (
