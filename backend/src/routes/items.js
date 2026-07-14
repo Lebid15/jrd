@@ -9,6 +9,7 @@ router.get('/', (req, res) => {
   const t = tid(req);
   const items = db.prepare(`
     SELECT i.*, cv.try_amount, cv.usd_amount, cv.notes,
+           cv.provider_balance, cv.provider_debt,
            ac.provider_type as api_provider_type, ac.base_url, ac.api_token, ac.kod, ac.sifre
     FROM items i
     LEFT JOIN current_values cv ON cv.item_id = i.id AND cv.tenant_id = i.tenant_id

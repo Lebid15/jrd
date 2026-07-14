@@ -74,7 +74,9 @@ db.exec(`
     item_id INTEGER NOT NULL UNIQUE REFERENCES items(id) ON DELETE CASCADE,
     try_amount REAL DEFAULT 0,
     usd_amount REAL DEFAULT 0,
-    notes TEXT DEFAULT ''
+    notes TEXT DEFAULT '',
+    provider_balance REAL,
+    provider_debt REAL
   );
 
   CREATE TABLE IF NOT EXISTS api_configs (
@@ -284,6 +286,11 @@ for (const tbl of TABLES_NEEDING_TENANT) {
 
 // 2.2) Migration: api_configs.whatsapp_group_name (موجود من قبل)
 addColumn('api_configs', 'whatsapp_group_name', `TEXT DEFAULT ''`);
+
+// 2.2.1) Migration: current_values.provider_balance / provider_debt
+// لعرض المتاح والدين لمزوّدي znet / murat_temiz في عمود الملاحظات (لا تدخل الحسابات)
+addColumn('current_values', 'provider_balance', `REAL`);
+addColumn('current_values', 'provider_debt', `REAL`);
 
 // 2.3) Migration: bank_transactions.source + external_id (موجود من قبل)
 addColumn('bank_transactions', 'source', `TEXT DEFAULT 'sms'`);

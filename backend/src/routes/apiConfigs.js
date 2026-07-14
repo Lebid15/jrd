@@ -67,11 +67,19 @@ router.post('/:itemId/fetch', async (req, res) => {
     const isUsd = result.currency === 'USD';
     const field = isUsd ? 'usd_amount' : 'try_amount';
 
+    // تفاصيل المزوّد (متاح/دين) للعرض فقط — لا تدخل الحسابات
+    const d = result.details || {};
+    const hasBreakdown = typeof d.balance === 'number' && typeof d.debt === 'number';
+    const pBal = hasBreakdown ? Math.round(d.balance * 100) / 100 : null;
+    const pDebt = hasBreakdown ? Math.round(d.debt * 100) / 100 : null;
+
     const existing = db.prepare('SELECT id FROM current_values WHERE item_id = ? AND tenant_id = ?').get(req.params.itemId, t);
     if (existing) {
-      db.prepare(`UPDATE current_values SET ${field} = ? WHERE item_id = ? AND tenant_id = ?`).run(roundedValue, req.params.itemId, t);
+      db.prepare(`UPDATE current_values SET ${field} = ?, provider_balance = ?, provider_debt = ? WHERE item_id = ? AND tenant_id = ?`)
+        .run(roundedValue, pBal, pDebt, req.params.itemId, t);
     } else {
-      db.prepare(`INSERT INTO current_values (tenant_id, item_id, ${field}) VALUES (?, ?, ?)`).run(t, req.params.itemId, roundedValue);
+      db.prepare(`INSERT INTO current_values (tenant_id, item_id, ${field}, provider_balance, provider_debt) VALUES (?, ?, ?, ?, ?)`)
+        .run(t, req.params.itemId, roundedValue, pBal, pDebt);
     }
 
     res.json({ balance: roundedValue, currency: result.currency || 'TRY', details: result.details });
@@ -102,11 +110,18 @@ router.post('/fetch-all', async (req, res) => {
       const isUsd = result.currency === 'USD';
       const field = isUsd ? 'usd_amount' : 'try_amount';
 
+      const d = result.details || {};
+      const hasBreakdown = typeof d.balance === 'number' && typeof d.debt === 'number';
+      const pBal = hasBreakdown ? Math.round(d.balance * 100) / 100 : null;
+      const pDebt = hasBreakdown ? Math.round(d.debt * 100) / 100 : null;
+
       const existing = db.prepare('SELECT id FROM current_values WHERE item_id = ? AND tenant_id = ?').get(config.item_id, t);
       if (existing) {
-        db.prepare(`UPDATE current_values SET ${field} = ? WHERE item_id = ? AND tenant_id = ?`).run(roundedValue, config.item_id, t);
+        db.prepare(`UPDATE current_values SET ${field} = ?, provider_balance = ?, provider_debt = ? WHERE item_id = ? AND tenant_id = ?`)
+          .run(roundedValue, pBal, pDebt, config.item_id, t);
       } else {
-        db.prepare(`INSERT INTO current_values (tenant_id, item_id, ${field}) VALUES (?, ?, ?)`).run(t, config.item_id, roundedValue);
+        db.prepare(`INSERT INTO current_values (tenant_id, item_id, ${field}, provider_balance, provider_debt) VALUES (?, ?, ?, ?, ?)`)
+          .run(t, config.item_id, roundedValue, pBal, pDebt);
       }
 
       results.push({ item_id: config.item_id, name: config.item_name, balance: roundedValue, currency: result.currency || 'TRY', details: result.details, success: true });

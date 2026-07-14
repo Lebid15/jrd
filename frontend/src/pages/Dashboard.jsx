@@ -257,14 +257,25 @@ export default function Dashboard() {
                     />
                   </td>
                   <td className="py-2 px-1 md:px-4 hidden sm:table-cell">
-                    <input
-                      type="text"
-                      value={item.notes || ''}
-                      onChange={(e) => handleLocalChange(item.id, 'notes', e.target.value)}
-                      onBlur={(e) => updateNotes(item.id, e.target.value)}
-                      className="table-input text-sm text-gray-500"
-                      placeholder="..."
-                    />
+                    {(item.provider_balance != null || item.provider_debt != null) ? (
+                      <div className="flex flex-col items-center gap-0.5 text-xs md:text-sm leading-tight" title="المتاح والدين من المزوّد (للعرض فقط، لا تدخل الحسابات)">
+                        <span className="text-emerald-600 font-semibold">
+                          {Number(item.provider_balance ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-red-600 font-semibold">
+                          {Number(item.provider_debt ?? 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        value={item.notes || ''}
+                        onChange={(e) => handleLocalChange(item.id, 'notes', e.target.value)}
+                        onBlur={(e) => updateNotes(item.id, e.target.value)}
+                        className="table-input text-sm text-gray-500"
+                        placeholder="..."
+                      />
+                    )}
                   </td>
                   <td className="py-2 px-1 md:px-4 text-center">
                     <div className="flex items-center justify-center gap-1">
