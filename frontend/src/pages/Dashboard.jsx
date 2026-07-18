@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, RefreshCw, Save, Trash2, GripVertical, Wifi, Bot, Landmark, CalendarRange } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
@@ -339,27 +339,21 @@ export default function Dashboard() {
                   <span className="truncate max-w-[80px] md:max-w-none">{item.name}</span>
                 </td>
                 <td className="py-2 px-1 md:px-4">
-                  <input
-                    type="number"
-                    value={item.try_amount || ''}
-                    onChange={(e) => handleLocalChange(item.id, 'try_amount', e.target.value)}
-                    onFocus={handleFocus}
-                    onBlur={(e) => updateValue(item.id, 'try_amount', e.target.value)}
-                    className={`table-input text-sm md:text-base ${(item.try_amount || 0) < 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}
-                    step="0.01"
-                    placeholder="0"
+                  <AmountCell
+                    item={item}
+                    field="try_amount"
+                    handleLocalChange={handleLocalChange}
+                    updateValue={updateValue}
+                    handleFocus={handleFocus}
                   />
                 </td>
                 <td className="py-2 px-1 md:px-4">
-                  <input
-                    type="number"
-                    value={item.usd_amount || ''}
-                    onChange={(e) => handleLocalChange(item.id, 'usd_amount', e.target.value)}
-                    onFocus={handleFocus}
-                    onBlur={(e) => updateValue(item.id, 'usd_amount', e.target.value)}
-                    className={`table-input text-sm md:text-base ${(item.usd_amount || 0) < 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}
-                    step="0.01"
-                    placeholder="0"
+                  <AmountCell
+                    item={item}
+                    field="usd_amount"
+                    handleLocalChange={handleLocalChange}
+                    updateValue={updateValue}
+                    handleFocus={handleFocus}
                   />
                 </td>
                 <td className="py-2 px-1 md:px-4 hidden sm:table-cell">
@@ -435,6 +429,88 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AmountCell({ item, field, handleLocalChange, updateValue, handleFocus }) {
+  const [adding, setAdding] = useState(false);
+  const [delta, setDelta] = useState('');
+  const inputRef = useRef(null);
+
+  const current = item[field];
+  const isNeg = (current || 0) < 0;
+
+  useEffect(() => {
+    if (adding && inputRef.current) inputRef.current.focus();
+  }, [adding]);
+
+  const applyDelta = () => {
+    const d = parseFloat(delta);
+    if (!isNaN(d) && d !== 0) {
+      const base = parseFloat(current) || 0;
+      const next = Math.round((base + d + Number.EPSILON) * 100) / 100;
+      handleLocalChange(item.id, field, next);
+      updateValue(item.id, field, next);
+    }
+    setDelta('');
+    setAdding(false);
+  };
+
+  const cancel = () => { setDelta(''); setAdding(false); };
+
+  return (
+    <div className="relative flex items-center gap-1">
+      <input
+        type="number"
+        value={current || ''}
+        onChange={(e) => handleLocalChange(item.id, field, e.target.value)}
+        onFocus={handleFocus}
+        onBlur={(e) => updateValue(item.id, field, e.target.value)}
+        className={`table-input text-sm md:text-base ${isNeg ? 'text-red-600 font-bold' : 'text-gray-700'}`}
+        step="0.01"
+        placeholder="0"
+      />
+      <button
+        type="button"
+        onClick={() => setAdding((v) => !v)}
+        className="shrink-0 p-1 text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 rounded border border-emerald-200"
+        title="إضافة مبلغ (موجب أو سالب) إلى القيمة الحالية"
+      >
+        <Plus size={14} />
+      </button>
+      {adding && (
+        <div className="absolute z-20 top-full mt-1 left-0 bg-white border border-emerald-300 rounded-lg shadow-lg p-2 flex items-center gap-1">
+          <input
+            ref={inputRef}
+            type="number"
+            value={delta}
+            onChange={(e) => setDelta(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') applyDelta();
+              if (e.key === 'Escape') cancel();
+            }}
+            className="w-24 border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400"
+            placeholder="± المبلغ"
+            step="0.01"
+          />
+          <button
+            type="button"
+            onClick={applyDelta}
+            className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold"
+          >
+            تطبيق
+          </button>
+          <button
+            type="button"
+            onClick={cancel}
+            className="px-1.5 py-1 text-gray-400 hover:text-gray-600 rounded text-xs"
+            title="إلغاء"
+          >
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
