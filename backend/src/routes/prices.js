@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import db from '../database.js';
 import { tid } from '../tenantHelpers.js';
-import { fetchPackages, supportsPriceList, cleanText } from '../priceProviders.js';
+import { fetchPackages, supportsPriceList, cleanText, makeMatchKey } from '../priceProviders.js';
 
 const router = Router();
 
@@ -137,6 +137,9 @@ router.get('/compare', (req, res) => {
   const pkgByRef = new Map();
   for (const r of rows) pkgByRef.set(`${r.source_item_id}|${r.external_ref}`, r);
 
+  // إعادة حساب مفتاح المطابقة من الاسم (يعمل فوراً على البيانات المخزّنة دون حاجة لتحديث).
+  const keyOf = (r) => makeMatchKey({ name: r.name }) || r.match_key || String(r.name || '').toLowerCase();
+
   // المصادر الموجودة فعلاً في اللقطة
   const sourcesMap = new Map();
   for (const r of rows) {
@@ -153,7 +156,7 @@ router.get('/compare', (req, res) => {
   // تجميع حسب match_key
   const groupsMap = new Map();
   for (const r of rows) {
-    const key = r.match_key || r.name.toLowerCase();
+    const key = keyOf(r);
     if (!groupsMap.has(key)) {
       groupsMap.set(key, {
         match_key: key,

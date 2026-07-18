@@ -24,16 +24,17 @@ export function cleanText(s) {
 }
 
 // يبني مفتاح مطابقة موحّد لمقارنة الباقة نفسها عبر عدة مصادر.
-// المصادر التي تستخدم نفس البرمجية (znet) تُنتج أسماء متطابقة → مطابقة دقيقة.
+// ملاحظة: في znet حقل kupur (denomination) غير موثوق (قد يتكرّر لباقات مختلفة)
+// و external_ref ليس ثابتاً بين المواقع. المعرّف الموثوق الوحيد هو الاسم (adi)
+// لأن كل مواقع znet تستخدم نفس البرمجية ونفس أسماء الباقات.
 export function makeMatchKey({ game, denomination, name }) {
-  const base = [game, denomination].filter(Boolean).join(' ') || name || '';
+  const base = (name && String(name).trim())
+    ? cleanText(name)
+    : [cleanText(game), denomination].filter(Boolean).join(' ');
   return String(base)
     .toLowerCase()
     .replace(/[أإآ]/g, 'ا')
-    .replace(/\b(mobile|global|id|pin|otomatik)\b/gi, ' ')
-    .replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
+    .replace(/[^a-z0-9؀-ۿ]+/g, ''); // إزالة كل الفواصل (مسافات/نقاط) → مطابقة ثابتة
 }
 
 // znet: pin_listesi.php → JSON { success, result: [ { id, adi, oyun_adi, fiyat, kupur } ] }
