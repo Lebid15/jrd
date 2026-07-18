@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { RefreshCw, Tags, Search, Server, AlertCircle } from 'lucide-react';
+import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -18,6 +18,12 @@ export default function Prices() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [q, setQ] = useState('');
+
+  // المطابقة اليدوية
+  const [linkModal, setLinkModal] = useState(null); // { group, source }
+  const [pkgCache, setPkgCache] = useState({});      // { [item_id]: [pkgs] }
+  const [pkgLoading, setPkgLoading] = useState(false);
+  const [pkgSearch, setPkgSearch] = useState('');
 
   const load = useCallback(async (activeTab) => {
     setLoading(true);
@@ -65,6 +71,48 @@ export default function Prices() {
       (g.denomination || '').toLowerCase().includes(needle)
     );
   }, [groups, q]);
+
+  const openLink = async (group, source) => {
+    setLinkModal({ group, source });
+    setPkgSearch('');
+    if (pkgCache[source.item_id]) return;
+    setPkgLoading(true);
+    try {
+      const res = await api.get('/prices/packages', { params: { tab, item_id: source.item_id } });
+      setPkgCache((prev) => ({ ...prev, [source.item_id]: res.data || [] }));
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'خطأ في جلب باقات المصدر');
+    } finally {
+      setPkgLoading(false);
+    }
+  };
+
+  const doLink = async (externalRef) => {
+    if (!linkModal) return;
+    try {
+      await api.post('/prices/link', {
+        tab,
+        match_key: linkModal.group.match_key,
+        source_item_id: linkModal.source.item_id,
+        external_ref: externalRef,
+      });
+      setLinkModal(null);
+      toast.success('تم الربط');
+      await load(tab);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'خطأ في الربط');
+    }
+  };
+
+  const doUnlink = async (group, source) => {
+    try {
+      await api.delete('/prices/link', { data: { tab, match_key: group.match_key, source_item_id: source.item_id } });
+      toast.success('تم إلغاء الربط');
+      await load(tab);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'خطأ في إلغاء الربط');
+    }
+  };
 
   const fmt = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -175,12 +223,36 @@ export default function Prices() {
                   {compareSources.map((s) => {
                     const cell = g.prices[s.item_id];
                     const isCheapest = cell && g.cheapest_price != null && cell.available && cell.price === g.cheapest_price;
+                    if (!cell) {
+                      return (
+                        <td key={s.item_id} className="py-2 px-3 text-center">
+                          <button
+                            onClick={() => openLink(g, s)}
+                            className="inline-flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded px-1.5 py-1 border border-indigo-200"
+                            title="ربط باقة من هذا المصدر يدوياً"
+                          >
+                            <Link2 size={13} /> ربط
+                          </button>
+                        </td>
+                      );
+                    }
                     return (
                       <td
                         key={s.item_id}
-                        className={`py-2 px-3 text-center ${isCheapest ? 'bg-emerald-100 text-emerald-800 font-bold rounded' : cell ? 'text-gray-700' : 'text-gray-300'}`}
+                        className={`py-2 px-3 text-center ${isCheapest ? 'bg-emerald-100 text-emerald-800 font-bold rounded' : 'text-gray-700'} ${cell.manual ? 'ring-1 ring-inset ring-indigo-200' : ''}`}
                       >
-                        {cell ? (cell.available ? fmt(cell.price) : '—') : '·'}
+                        <div className="flex items-center justify-center gap-1">
+                          <span title={cell.name}>{cell.available ? fmt(cell.price) : '—'}</span>
+                          {cell.manual && (
+                            <button
+                              onClick={() => doUnlink(g, s)}
+                              className="text-indigo-400 hover:text-red-500"
+                              title="إلغاء الربط اليدوي"
+                            >
+                              <X size={12} />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     );
                   })}
@@ -196,6 +268,80 @@ export default function Prices() {
           )}
         </div>
       )}
+
+      {/* Manual link modal */}
+      {linkModal && (
+        <LinkModal
+          group={linkModal.group}
+          source={linkModal.source}
+          packages={pkgCache[linkModal.source.item_id] || []}
+          loading={pkgLoading}
+          search={pkgSearch}
+          setSearch={setPkgSearch}
+          onPick={doLink}
+          onClose={() => setLinkModal(null)}
+          fmt={fmt}
+        />
+      )}
+    </div>
+  );
+}
+
+function LinkModal({ group, source, packages, loading, search, setSearch, onPick, onClose, fmt }) {
+  const needle = search.trim().toLowerCase();
+  const filtered = needle
+    ? packages.filter((p) => (p.name || '').toLowerCase().includes(needle))
+    : packages;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b">
+          <div>
+            <h3 className="font-bold text-gray-800">ربط باقة من: {source.name}</h3>
+            <p className="text-xs text-gray-500 mt-0.5 truncate max-w-[380px]">إلى الصف: {group.display_name}</p>
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600"><X size={22} /></button>
+        </div>
+        <div className="p-3 border-b">
+          <div className="relative">
+            <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="بحث في باقات المصدر..."
+              className="w-full border border-gray-300 rounded-lg pr-9 pl-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-40">
+              <RefreshCw className="animate-spin-slow text-indigo-500" size={32} />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-center text-gray-400 text-sm">لا باقات مطابقة.</div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {filtered.slice(0, 300).map((p) => (
+                <li key={p.external_ref}>
+                  <button
+                    onClick={() => onPick(p.external_ref)}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-indigo-50 text-right"
+                  >
+                    <span className="text-sm text-gray-800 truncate">{p.name || '(بلا اسم)'}</span>
+                    <span className="text-sm font-bold text-emerald-700 whitespace-nowrap">₺{fmt(p.price)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="p-3 border-t text-xs text-gray-400 text-center">
+          {filtered.length > 300 ? 'يُعرض أوّل 300 نتيجة — استخدم البحث للتضييق.' : `${filtered.length} باقة`}
+        </div>
+      </div>
     </div>
   );
 }

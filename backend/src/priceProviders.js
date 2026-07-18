@@ -6,6 +6,21 @@ import fetch from 'node-fetch';
 //   { external_ref, name, category, denomination, price, currency, is_available, match_key }
 // ════════════════════════════════════════════════════════════════════════════
 
+// ينظّف النصّ من وسوم HTML وكيانات الترميز (بعض باقات znet تحوي HTML في adi).
+export function cleanText(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // يبني مفتاح مطابقة موحّد لمقارنة الباقة نفسها عبر عدة مصادر.
 // المصادر التي تستخدم نفس البرمجية (znet) تُنتج أسماء متطابقة → مطابقة دقيقة.
 export function makeMatchKey({ game, denomination, name }) {
@@ -38,9 +53,9 @@ export async function fetchZnetPackages(config) {
     throw new Error(`Znet pin_listesi خطأ: ${data?.error || text.slice(0, 200)}`);
   }
   return data.result.map((p) => {
-    const game = p.oyun_adi || '';
+    const game = cleanText(p.oyun_adi);
     const denomination = p.kupur != null ? String(p.kupur) : '';
-    const name = p.adi || '';
+    const name = cleanText(p.adi);
     return {
       external_ref: String(p.id ?? ''),
       name,
@@ -70,8 +85,8 @@ export async function fetchZdkPackages(config) {
     throw new Error(`ZDK products خطأ: ${data?.message || JSON.stringify(data).slice(0, 200)}`);
   }
   return data.map((p) => {
-    const name = p.name || '';
-    const category = p.category_name || '';
+    const name = cleanText(p.name);
+    const category = cleanText(p.category_name);
     return {
       external_ref: String(p.id ?? ''),
       name,

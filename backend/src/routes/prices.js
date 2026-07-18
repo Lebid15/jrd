@@ -27,6 +27,49 @@ router.get('/sources', (req, res) => {
   res.json(sources);
 });
 
+// قائمة باقات مصدر واحد (للمطابقة اليدوية) — تُقرأ من اللقطة المخزّنة.
+router.get('/packages', (req, res) => {
+  const t = tid(req);
+  const tab = req.query.tab || 'games';
+  const itemId = Number(req.query.item_id);
+  if (!TABS.has(tab) || !itemId) return res.status(400).json({ error: 'bad_params' });
+  const rows = db.prepare(`
+    SELECT external_ref, name, category, denomination, price, currency, is_available
+    FROM price_packages
+    WHERE tenant_id = ? AND tab = ? AND source_item_id = ?
+    ORDER BY name
+  `).all(t, tab, itemId);
+  res.json(rows);
+});
+
+// ربط يدوي: صفّ المقارنة (match_key) ↔ باقة مصدر معيّن.
+router.post('/link', (req, res) => {
+  const t = tid(req);
+  const { tab = 'games', match_key, source_item_id, external_ref } = req.body || {};
+  if (!TABS.has(tab) || !match_key || !source_item_id || external_ref == null) {
+    return res.status(400).json({ error: 'bad_params' });
+  }
+  const own = db.prepare('SELECT 1 FROM items WHERE id = ? AND tenant_id = ?').get(source_item_id, t);
+  if (!own) return res.status(404).json({ error: 'source_not_found' });
+  db.prepare(`
+    INSERT INTO price_links (tenant_id, tab, match_key, source_item_id, external_ref)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(tenant_id, tab, match_key, source_item_id)
+    DO UPDATE SET external_ref = excluded.external_ref, created_at = datetime('now')
+  `).run(t, tab, match_key, source_item_id, String(external_ref));
+  res.json({ success: true });
+});
+
+// إلغاء ربط يدوي.
+router.delete('/link', (req, res) => {
+  const t = tid(req);
+  const { tab = 'games', match_key, source_item_id } = req.body || {};
+  if (!TABS.has(tab) || !match_key || !source_item_id) return res.status(400).json({ error: 'bad_params' });
+  db.prepare('DELETE FROM price_links WHERE tenant_id = ? AND tab = ? AND match_key = ? AND source_item_id = ?')
+    .run(t, tab, match_key, source_item_id);
+  res.json({ success: true });
+});
+
 // تحديث الأسعار: يجلب الباقات من كل المصادر المدعومة (أو مصدر واحد) ويخزّن لقطة.
 router.post('/refresh', async (req, res) => {
   const t = tid(req);
@@ -82,11 +125,15 @@ router.get('/compare', (req, res) => {
 
   const rows = db.prepare(`
     SELECT source_item_id, source_name, provider_type, match_key,
-           name, category, denomination, price, currency, is_available
+           external_ref, name, category, denomination, price, currency, is_available
     FROM price_packages
     WHERE tenant_id = ? AND tab = ?
     ORDER BY match_key, price ASC
   `).all(t, tab);
+
+  // بحث سريع عن باقة بـ (source_item_id, external_ref) — للمطابقة اليدوية.
+  const pkgByRef = new Map();
+  for (const r of rows) pkgByRef.set(`${r.source_item_id}|${r.external_ref}`, r);
 
   // المصادر الموجودة فعلاً في اللقطة
   const sourcesMap = new Map();
@@ -125,6 +172,24 @@ router.get('/compare', (req, res) => {
         available: !!r.is_available,
       };
     }
+  }
+
+  // تطبيق الروابط اليدوية: تُدخِل سعر باقة مصدر إلى صفّ مطابقة معيّن.
+  const links = db.prepare(
+    'SELECT match_key, source_item_id, external_ref FROM price_links WHERE tenant_id = ? AND tab = ?'
+  ).all(t, tab);
+  for (const lk of links) {
+    const g = groupsMap.get(lk.match_key);
+    if (!g) continue;
+    const pkg = pkgByRef.get(`${lk.source_item_id}|${lk.external_ref}`);
+    if (!pkg) continue;
+    g.prices[lk.source_item_id] = {
+      price: pkg.price,
+      currency: pkg.currency,
+      name: pkg.name,
+      available: !!pkg.is_available,
+      manual: true,
+    };
   }
 
   const groups = [...groupsMap.values()].map((g) => {

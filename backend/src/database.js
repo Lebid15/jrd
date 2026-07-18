@@ -241,6 +241,19 @@ db.exec(`
     is_available INTEGER DEFAULT 1,
     fetched_at TEXT DEFAULT (datetime('now'))
   );
+
+  -- price_links: مطابقة يدوية — تربط صفّ المقارنة (match_key) بباقة مصدر معيّن.
+  -- تُستخدم حين تختلف أسماء الباقات بين المصادر (مثلاً znet مقابل zdk).
+  CREATE TABLE IF NOT EXISTS price_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE,
+    tab TEXT NOT NULL DEFAULT 'games',
+    match_key TEXT NOT NULL,
+    source_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    external_ref TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(tenant_id, tab, match_key, source_item_id)
+  );
 `);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -443,6 +456,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_price_packages_tenant_tab     ON price_packages(tenant_id, tab);
   CREATE INDEX IF NOT EXISTS idx_price_packages_source         ON price_packages(source_item_id);
   CREATE INDEX IF NOT EXISTS idx_price_packages_match          ON price_packages(tenant_id, tab, match_key);
+  CREATE INDEX IF NOT EXISTS idx_price_links_tenant_tab        ON price_links(tenant_id, tab);
 `);
 
 // ════════════════════════════════════════════════════════════════════════════
