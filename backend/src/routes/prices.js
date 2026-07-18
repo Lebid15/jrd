@@ -164,9 +164,12 @@ router.get('/compare', (req, res) => {
         category: cleanText(r.category),
         denomination: r.denomination,
         prices: {},
+        hasZnet: false,
       });
     }
     const grp = groupsMap.get(key);
+    // الصفّ يُرتكز على باقات znet (تتطابق تلقائياً). zdk تُضاف بالربط فقط.
+    if (r.provider_type === 'znet') grp.hasZnet = true;
     const cur = grp.prices[r.source_item_id];
     // نحتفظ بأقل سعر لكل مصدر (في حال وجود تكرار)
     if (cur == null || r.price < cur.price) {
@@ -197,7 +200,8 @@ router.get('/compare', (req, res) => {
     };
   }
 
-  const groups = [...groupsMap.values()].map((g) => {
+  // نعرض فقط الصفوف المرتكزة على znet (باقات zdk المستقلّة لا تظهر كصفوف؛ تظهر بالربط).
+  const groups = [...groupsMap.values()].filter((g) => g.hasZnet).map((g) => {
     const entries = Object.entries(g.prices).map(([sid, v]) => ({ source_item_id: Number(sid), ...v }));
     const priced = entries.filter((e) => e.available && e.price > 0);
     const cheapest = priced.length ? Math.min(...priced.map((e) => e.price)) : null;
