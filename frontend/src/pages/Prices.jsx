@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter } from 'lucide-react';
+import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter, ChevronDown, Check } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -232,19 +232,7 @@ export default function Prices() {
             className="w-full border border-gray-300 rounded-lg pr-10 pl-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400"
           />
         </div>
-        <div className="relative sm:w-64">
-          <Filter size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-          <select
-            value={catFilter}
-            onChange={(e) => setCatFilter(e.target.value)}
-            className="w-full appearance-none border border-gray-300 rounded-lg pr-9 pl-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
-          >
-            <option value="">كل المنتجات</option>
-            {categories.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </div>
+        <CategorySelect value={catFilter} options={categories} onChange={setCatFilter} />
       </div>
 
       {/* Comparison table */}
@@ -353,8 +341,81 @@ export default function Prices() {
   );
 }
 
-function LinkModal({ group, source, packages, loading, search, setSearch, onPick, onClose, fmt }) {
+// منسدلة فلتر المنتج مع حقل بحث
+function CategorySelect({ value, options, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const onDocClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+  useEffect(() => { if (open && inputRef.current) inputRef.current.focus(); }, [open]);
+
   const needle = search.trim().toLowerCase();
+  const filtered = needle ? options.filter((o) => o.toLowerCase().includes(needle)) : options;
+  const pick = (v) => { onChange(v); setOpen(false); setSearch(''); };
+
+  return (
+    <div ref={ref} className="relative sm:w-64">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+      >
+        <Filter size={16} className="text-gray-400 shrink-0" />
+        <span className={`flex-1 truncate text-right ${value ? 'text-gray-800' : 'text-gray-500'}`}>{value || 'كل المنتجات'}</span>
+        <ChevronDown size={16} className="text-gray-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-72 flex flex-col">
+          <div className="p-2 border-b">
+            <div className="relative">
+              <Search size={15} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                ref={inputRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="ابحث عن منتج..."
+                className="w-full border border-gray-300 rounded pr-8 pl-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-400"
+              />
+            </div>
+          </div>
+          <ul className="overflow-y-auto">
+            <li>
+              <button
+                type="button"
+                onClick={() => pick('')}
+                className={`w-full flex items-center justify-between px-3 py-2 text-sm text-right hover:bg-emerald-50 ${!value ? 'text-emerald-700 font-bold' : 'text-gray-700'}`}
+              >
+                كل المنتجات {!value && <Check size={15} />}
+              </button>
+            </li>
+            {filtered.map((o) => (
+              <li key={o}>
+                <button
+                  type="button"
+                  onClick={() => pick(o)}
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm text-right hover:bg-emerald-50 ${value === o ? 'text-emerald-700 font-bold' : 'text-gray-700'}`}
+                >
+                  <span className="truncate">{o}</span>{value === o && <Check size={15} className="shrink-0" />}
+                </button>
+              </li>
+            ))}
+            {filtered.length === 0 && (
+              <li className="px-3 py-3 text-center text-gray-400 text-sm">لا نتائج</li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LinkModal({ group, source, packages, loading, search, setSearch, onPick, onClose, fmt }) {  const needle = search.trim().toLowerCase();
   const filtered = needle
     ? packages.filter((p) => (p.name || '').toLowerCase().includes(needle))
     : packages;
