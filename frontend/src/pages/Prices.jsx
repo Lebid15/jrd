@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter, ChevronDown, Check } from 'lucide-react';
+import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter, ChevronDown, Check, EyeOff, RotateCcw } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -20,6 +20,7 @@ export default function Prices() {
   const [q, setQ] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [showTop, setShowTop] = useState(false);
+  const [hiddenSources, setHiddenSources] = useState(() => new Set()); // مصادر مُزالة من المقارنة
   const scrollRef = useRef(null);
 
   // المطابقة اليدوية
@@ -46,6 +47,8 @@ export default function Prices() {
   }, []);
 
   useEffect(() => { load(tab); }, [load, tab]);
+  // عند تبديل التبويب تختلف المصادر — نعيد إظهار كل شيء.
+  useEffect(() => { setHiddenSources(new Set()); }, [tab]);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -83,6 +86,28 @@ export default function Prices() {
     for (const g of groups) if (g.category) set.add(g.category);
     return [...set].sort((a, b) => a.localeCompare(b, 'ar'));
   }, [groups]);
+
+  // المصادر المعروضة/المخفاة في المقارنة
+  const visibleSources = useMemo(
+    () => compareSources.filter((s) => !hiddenSources.has(s.item_id)),
+    [compareSources, hiddenSources],
+  );
+  const hiddenList = useMemo(
+    () => compareSources.filter((s) => hiddenSources.has(s.item_id)),
+    [compareSources, hiddenSources],
+  );
+  // أرخص سعر محسوب على المصادر المعروضة فقط (يتجاهل المصادر المُزالة).
+  const cheapestVisible = useCallback((g) => {
+    let min = null;
+    for (const s of visibleSources) {
+      const c = g.prices[s.item_id];
+      if (c && c.available && c.price > 0) min = min == null ? c.price : Math.min(min, c.price);
+    }
+    return min;
+  }, [visibleSources]);
+  const hideSource = (id) => setHiddenSources((prev) => { const n = new Set(prev); n.add(id); return n; });
+  const restoreSource = (id) => setHiddenSources((prev) => { const n = new Set(prev); n.delete(id); return n; });
+  const restoreAll = () => setHiddenSources(new Set());
 
   const recomputeCheapest = (prices) => {
     const vals = Object.values(prices).filter((v) => v.available && v.price > 0).map((v) => v.price);
@@ -235,6 +260,31 @@ export default function Prices() {
         <CategorySelect value={catFilter} options={categories} onChange={setCatFilter} />
       </div>
 
+      {/* شريط إعادة إظهار المصادر المُزالة */}
+      {hiddenList.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <span className="text-sm text-amber-800 font-semibold flex items-center gap-1">
+            <EyeOff size={15} /> مصادر مُزالة من المقارنة:
+          </span>
+          {hiddenList.map((s) => (
+            <button
+              key={s.item_id}
+              onClick={() => restoreSource(s.item_id)}
+              className="inline-flex items-center gap-1 text-xs bg-white border border-amber-300 text-amber-800 hover:bg-amber-100 rounded-lg px-2 py-1"
+              title="إعادة إظهار هذا المصدر في المقارنة"
+            >
+              <RotateCcw size={12} /> {s.name}
+            </button>
+          ))}
+          <button
+            onClick={restoreAll}
+            className="text-xs text-amber-700 hover:text-amber-900 underline mr-auto"
+          >
+            إعادة الكل
+          </button>
+        </div>
+      )}
+
       {/* Comparison table */}
       {loading ? (
         <div className="flex items-center justify-center h-64">
@@ -250,22 +300,40 @@ export default function Prices() {
             <thead className="sticky top-0 z-20">
               <tr className="bg-emerald-600 text-white">
                 <th className="py-3 px-3 text-right sticky right-0 z-30 bg-emerald-600">الباقة</th>
-                {compareSources.map((s) => (
-                  <th key={s.item_id} className="py-3 px-3 text-center whitespace-nowrap">{s.name}</th>
+                {visibleSources.map((s) => (
+                  <th key={s.item_id} className="py-3 px-3 text-center whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-1">
+                      <span>{s.name}</span>
+                      <button
+                        onClick={() => hideSource(s.item_id)}
+                        className="text-white/70 hover:text-white hover:bg-white/20 rounded p-0.5"
+                        title="إزالة هذا المصدر من المقارنة"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </th>
                 ))}
                 <th className="py-3 px-3 text-center whitespace-nowrap">الأرخص</th>
               </tr>
             </thead>
             <tbody>
-              {filteredGroups.map((g) => (
+              {filteredGroups.map((g) => {
+                const cheapest = cheapestVisible(g);
+                return (
                 <tr key={g.match_key} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-2 px-3 font-medium text-gray-800 sticky right-0 z-10 bg-white">
-                    <div className="truncate max-w-[220px]" title={g.display_name}>{g.display_name}</div>
+                    <div className="truncate max-w-[220px]" title={g.display_name}>
+                      {g.display_name}
+                      {g.external_ref != null && g.external_ref !== '' && (
+                        <span className="text-gray-400 font-normal"> ({g.external_ref})</span>
+                      )}
+                    </div>
                     {g.category && <div className="text-xs text-gray-400">{g.category}</div>}
                   </td>
-                  {compareSources.map((s) => {
+                  {visibleSources.map((s) => {
                     const cell = g.prices[s.item_id];
-                    const isCheapest = cell && g.cheapest_price != null && cell.available && cell.price === g.cheapest_price;
+                    const isCheapest = cell && cheapest != null && cell.available && cell.price === cheapest;
                     if (!cell) {
                       return (
                         <td key={s.item_id} className="py-2 px-3 text-center">
@@ -300,10 +368,11 @@ export default function Prices() {
                     );
                   })}
                   <td className="py-2 px-3 text-center font-bold text-emerald-700">
-                    {g.cheapest_price != null ? `₺${fmt(g.cheapest_price)}` : '—'}
+                    {cheapest != null ? `₺${fmt(cheapest)}` : '—'}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {filteredGroups.length === 0 && (

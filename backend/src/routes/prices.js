@@ -163,13 +163,18 @@ router.get('/compare', (req, res) => {
         display_name: cleanText(r.name),
         category: cleanText(r.category),
         denomination: r.denomination,
+        external_ref: null,
         prices: {},
         hasZnet: false,
       });
     }
     const grp = groupsMap.get(key);
     // الصفّ يُرتكز على باقات znet (تتطابق تلقائياً). zdk تُضاف بالربط فقط.
-    if (r.provider_type === 'znet') grp.hasZnet = true;
+    if (r.provider_type === 'znet') {
+      grp.hasZnet = true;
+      // رقم الربط (external_ref) من باقة znet — يُعرض بجانب اسم المنتج.
+      if (grp.external_ref == null) grp.external_ref = r.external_ref;
+    }
     const cur = grp.prices[r.source_item_id];
     // نحتفظ بأقل سعر لكل مصدر (في حال وجود تكرار)
     if (cur == null || r.price < cur.price) {
