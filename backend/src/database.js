@@ -221,6 +221,26 @@ db.exec(`
     amount REAL,
     transaction_id INTEGER
   );
+
+  -- price_packages: لقطة كتالوق الباقات لكل مصدر أسعار (قسم "أسعار الباقات").
+  -- تُستبدل صفوف المصدر+التبويب بالكامل عند كل تحديث.
+  CREATE TABLE IF NOT EXISTS price_packages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE,
+    source_item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    source_name TEXT DEFAULT '',
+    provider_type TEXT NOT NULL,
+    tab TEXT NOT NULL DEFAULT 'games',
+    external_ref TEXT DEFAULT '',
+    name TEXT NOT NULL,
+    category TEXT DEFAULT '',
+    denomination TEXT DEFAULT '',
+    match_key TEXT DEFAULT '',
+    price REAL NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'TRY',
+    is_available INTEGER DEFAULT 1,
+    fetched_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -419,6 +439,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_users_tenant                  ON users(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_user            ON auth_sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires         ON auth_sessions(expires_at);
+
+  CREATE INDEX IF NOT EXISTS idx_price_packages_tenant_tab     ON price_packages(tenant_id, tab);
+  CREATE INDEX IF NOT EXISTS idx_price_packages_source         ON price_packages(source_item_id);
+  CREATE INDEX IF NOT EXISTS idx_price_packages_match          ON price_packages(tenant_id, tab, match_key);
 `);
 
 // ════════════════════════════════════════════════════════════════════════════

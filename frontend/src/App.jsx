@@ -10,6 +10,7 @@ import Currency from './pages/Currency.jsx';
 import ApiSettings from './pages/ApiSettings.jsx';
 import Bank from './pages/Bank.jsx';
 import WhatsApp from './pages/WhatsApp.jsx';
+import Prices from './pages/Prices.jsx';
 import Login from './pages/Login.jsx';
 import AdminTenants from './pages/AdminTenants.jsx';
 import AdminUsers from './pages/AdminUsers.jsx';
@@ -28,6 +29,7 @@ function ProtectedShell() {
           <Route path="/api-settings" element={<ApiSettings />} />
           <Route path="/bank" element={<Bank />} />
           <Route path="/whatsapp" element={<WhatsApp />} />
+          <Route path="/prices" element={<Prices />} />
           <Route path="/admin/tenants" element={<RequireAuth adminOnly><AdminTenants /></RequireAuth>} />
           <Route path="/admin/users" element={<RequireAuth adminOnly><AdminUsers /></RequireAuth>} />
         </Routes>

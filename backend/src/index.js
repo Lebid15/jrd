@@ -13,6 +13,7 @@ import internalRouter from './routes/internal.js';
 import monthlyRouter from './routes/monthly.js';
 import authRouter from './routes/auth.js';
 import adminRouter from './routes/admin.js';
+import pricesRouter from './routes/prices.js';
 import { requireAuth, requireAdmin, optionalAuth } from './auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,7 @@ app.use('/api/photos', photosRouter);
 app.use('/api/configs', apiConfigsRouter);
 app.use('/api/bank', bankRouter);
 app.use('/api/monthly', monthlyRouter);
+app.use('/api/prices', pricesRouter);
 
 // Serve frontend static files in production
 const frontendPath = path.join(__dirname, '..', '..', 'frontend', 'dist');
