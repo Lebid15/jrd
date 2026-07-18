@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import db from '../database.js';
 import { tid } from '../tenantHelpers.js';
-import { fetchPackages, supportsPriceList } from '../priceProviders.js';
+import { fetchPackages, supportsPriceList, cleanText } from '../priceProviders.js';
 
 const router = Router();
 
@@ -39,7 +39,9 @@ router.get('/packages', (req, res) => {
     WHERE tenant_id = ? AND tab = ? AND source_item_id = ?
     ORDER BY name
   `).all(t, tab, itemId);
-  res.json(rows);
+  // تنظيف الأسماء عند القراءة (البيانات القديمة قد تحوي HTML)
+  const cleaned = rows.map((r) => ({ ...r, name: cleanText(r.name), category: cleanText(r.category) }));
+  res.json(cleaned);
 });
 
 // ربط يدوي: صفّ المقارنة (match_key) ↔ باقة مصدر معيّن.
@@ -155,20 +157,20 @@ router.get('/compare', (req, res) => {
     if (!groupsMap.has(key)) {
       groupsMap.set(key, {
         match_key: key,
-        display_name: r.name,
-        category: r.category,
+        display_name: cleanText(r.name),
+        category: cleanText(r.category),
         denomination: r.denomination,
         prices: {},
       });
     }
-    const g = groupsMap.get(key);
-    const cur = g.prices[r.source_item_id];
+    const grp = groupsMap.get(key);
+    const cur = grp.prices[r.source_item_id];
     // نحتفظ بأقل سعر لكل مصدر (في حال وجود تكرار)
     if (cur == null || r.price < cur.price) {
-      g.prices[r.source_item_id] = {
+      grp.prices[r.source_item_id] = {
         price: r.price,
         currency: r.currency,
-        name: r.name,
+        name: cleanText(r.name),
         available: !!r.is_available,
       };
     }
@@ -186,7 +188,7 @@ router.get('/compare', (req, res) => {
     g.prices[lk.source_item_id] = {
       price: pkg.price,
       currency: pkg.currency,
-      name: pkg.name,
+      name: cleanText(pkg.name),
       available: !!pkg.is_available,
       manual: true,
     };

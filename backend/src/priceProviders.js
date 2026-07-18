@@ -18,6 +18,8 @@ export function cleanText(s) {
     .replace(/&quot;/gi, '"')
     .replace(/&#\d+;/g, ' ')
     .replace(/\s+/g, ' ')
+    .replace(/^[\s.\-–—_|]+/, '')   // نقاط/شرطات زائدة في البداية
+    .replace(/[\s.\-–—_|]+$/, '')   // ونهايةً
     .trim();
 }
 
