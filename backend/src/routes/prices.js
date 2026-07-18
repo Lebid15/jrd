@@ -201,8 +201,17 @@ router.get('/compare', (req, res) => {
     return { ...g, cheapest_price: cheapest, source_count: entries.length };
   });
 
-  // فرز: الأكثر انتشاراً عبر المصادر أوّلاً، ثم أبجدياً
-  groups.sort((a, b) => b.source_count - a.source_count || a.display_name.localeCompare(b.display_name));
+  // فرز ثابت حسب المنتج: باقات المنتج الواحد متجاورة، مرتّبة حسب الفئة (الكمية).
+  // الترتيب لا يتأثّر بالربط اليدوي (لا نفرز حسب عدد المصادر).
+  const num = (s) => {
+    const n = parseFloat(String(s ?? '').replace(/[^\d.]/g, ''));
+    return Number.isFinite(n) ? n : Infinity;
+  };
+  groups.sort((a, b) =>
+    (a.category || '').localeCompare(b.category || '', 'ar') ||
+    num(a.denomination) - num(b.denomination) ||
+    (a.display_name || '').localeCompare(b.display_name || '', 'ar')
+  );
 
   res.json({ tab, sources, groups });
 });

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
@@ -18,6 +18,9 @@ export default function Prices() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [q, setQ] = useState('');
+  const [catFilter, setCatFilter] = useState('');
+  const [showTop, setShowTop] = useState(false);
+  const scrollRef = useRef(null);
 
   // المطابقة اليدوية
   const [linkModal, setLinkModal] = useState(null); // { group, source }
@@ -64,13 +67,27 @@ export default function Prices() {
 
   const filteredGroups = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return groups;
-    return groups.filter((g) =>
-      (g.display_name || '').toLowerCase().includes(needle) ||
-      (g.category || '').toLowerCase().includes(needle) ||
-      (g.denomination || '').toLowerCase().includes(needle)
-    );
-  }, [groups, q]);
+    return groups.filter((g) => {
+      if (catFilter && g.category !== catFilter) return false;
+      if (!needle) return true;
+      return (
+        (g.display_name || '').toLowerCase().includes(needle) ||
+        (g.category || '').toLowerCase().includes(needle) ||
+        (g.denomination || '').toLowerCase().includes(needle)
+      );
+    });
+  }, [groups, q, catFilter]);
+
+  const categories = useMemo(() => {
+    const set = new Set();
+    for (const g of groups) if (g.category) set.add(g.category);
+    return [...set].sort((a, b) => a.localeCompare(b, 'ar'));
+  }, [groups]);
+
+  const recomputeCheapest = (prices) => {
+    const vals = Object.values(prices).filter((v) => v.available && v.price > 0).map((v) => v.price);
+    return vals.length ? Math.min(...vals) : null;
+  };
 
   const openLink = async (group, source) => {
     setLinkModal({ group, source });
@@ -87,18 +104,33 @@ export default function Prices() {
     }
   };
 
-  const doLink = async (externalRef) => {
+  // ربط: تحديث الحقل محلياً فقط (بلا إعادة تحميل كامل) للحفاظ على الترتيب والموضع.
+  const doLink = async (pkg) => {
     if (!linkModal) return;
+    const { group, source } = linkModal;
     try {
       await api.post('/prices/link', {
         tab,
-        match_key: linkModal.group.match_key,
-        source_item_id: linkModal.source.item_id,
-        external_ref: externalRef,
+        match_key: group.match_key,
+        source_item_id: source.item_id,
+        external_ref: pkg.external_ref,
       });
+      setGroups((prev) => prev.map((g) => {
+        if (g.match_key !== group.match_key) return g;
+        const prices = {
+          ...g.prices,
+          [source.item_id]: {
+            price: pkg.price,
+            currency: pkg.currency,
+            name: pkg.name,
+            available: !!pkg.is_available,
+            manual: true,
+          },
+        };
+        return { ...g, prices, cheapest_price: recomputeCheapest(prices), source_count: Object.keys(prices).length };
+      }));
       setLinkModal(null);
       toast.success('تم الربط');
-      await load(tab);
     } catch (err) {
       toast.error(err.response?.data?.error || 'خطأ في الربط');
     }
@@ -107,12 +139,20 @@ export default function Prices() {
   const doUnlink = async (group, source) => {
     try {
       await api.delete('/prices/link', { data: { tab, match_key: group.match_key, source_item_id: source.item_id } });
+      setGroups((prev) => prev.map((g) => {
+        if (g.match_key !== group.match_key) return g;
+        const prices = { ...g.prices };
+        delete prices[source.item_id];
+        return { ...g, prices, cheapest_price: recomputeCheapest(prices), source_count: Object.keys(prices).length };
+      }));
       toast.success('تم إلغاء الربط');
-      await load(tab);
     } catch (err) {
       toast.error(err.response?.data?.error || 'خطأ في إلغاء الربط');
     }
   };
+
+  const onScroll = (e) => setShowTop(e.target.scrollTop > 300);
+  const scrollTop = () => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
 
   const fmt = (n) => Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -182,14 +222,29 @@ export default function Prices() {
       </div>
 
       {/* Search */}
-      <div className="relative mb-4">
-        <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="بحث عن باقة..."
-          className="w-full border border-gray-300 rounded-lg pr-10 pl-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400"
-        />
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="relative flex-1">
+          <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="بحث عن باقة..."
+            className="w-full border border-gray-300 rounded-lg pr-10 pl-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-400"
+          />
+        </div>
+        <div className="relative sm:w-64">
+          <Filter size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <select
+            value={catFilter}
+            onChange={(e) => setCatFilter(e.target.value)}
+            className="w-full appearance-none border border-gray-300 rounded-lg pr-9 pl-4 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          >
+            <option value="">كل المنتجات</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Comparison table */}
@@ -202,11 +257,11 @@ export default function Prices() {
           لا توجد بيانات بعد. اضغط <b>«تحديث الأسعار»</b> لجلب الباقات من المصادر.
         </div>
       ) : (
-        <div className="bg-white rounded-xl shadow-lg overflow-x-auto">
-          <table className="w-full min-w-[600px] text-sm">
-            <thead>
+        <div ref={scrollRef} onScroll={onScroll} className="relative bg-white rounded-xl shadow-lg overflow-auto max-h-[70vh]">
+          <table className="w-full min-w-[700px] text-sm">
+            <thead className="sticky top-0 z-20">
               <tr className="bg-emerald-600 text-white">
-                <th className="py-3 px-3 text-right sticky right-0 bg-emerald-600">الباقة</th>
+                <th className="py-3 px-3 text-right sticky right-0 z-30 bg-emerald-600">الباقة</th>
                 {compareSources.map((s) => (
                   <th key={s.item_id} className="py-3 px-3 text-center whitespace-nowrap">{s.name}</th>
                 ))}
@@ -216,7 +271,7 @@ export default function Prices() {
             <tbody>
               {filteredGroups.map((g) => (
                 <tr key={g.match_key} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-2 px-3 font-medium text-gray-800 sticky right-0 bg-white">
+                  <td className="py-2 px-3 font-medium text-gray-800 sticky right-0 z-10 bg-white">
                     <div className="truncate max-w-[220px]" title={g.display_name}>{g.display_name}</div>
                     {g.category && <div className="text-xs text-gray-400">{g.category}</div>}
                   </td>
@@ -283,6 +338,17 @@ export default function Prices() {
           fmt={fmt}
         />
       )}
+
+      {/* Scroll to top */}
+      {showTop && (
+        <button
+          onClick={scrollTop}
+          className="fixed bottom-6 left-6 z-40 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full p-3 shadow-lg transition-colors"
+          title="صعود للأعلى"
+        >
+          <ArrowUp size={20} />
+        </button>
+      )}
     </div>
   );
 }
@@ -327,7 +393,7 @@ function LinkModal({ group, source, packages, loading, search, setSearch, onPick
               {filtered.slice(0, 300).map((p) => (
                 <li key={p.external_ref}>
                   <button
-                    onClick={() => onPick(p.external_ref)}
+                    onClick={() => onPick(p)}
                     className="w-full flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-indigo-50 text-right"
                   >
                     <span className="text-sm text-gray-800 truncate">{p.name || '(بلا اسم)'}</span>
