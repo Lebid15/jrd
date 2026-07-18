@@ -320,6 +320,10 @@ for (const tbl of TABLES_NEEDING_TENANT) {
 // 2.2) Migration: api_configs.whatsapp_group_name (موجود من قبل)
 addColumn('api_configs', 'whatsapp_group_name', `TEXT DEFAULT ''`);
 
+// 2.2.0) Migration: api_configs.pin — رمز الـ PIN (الآلة الحاسبة) لروبوت bayi_alayatl
+// يختلف لكل عميل. فارغ = يستخدم الافتراضي في السكرابر.
+addColumn('api_configs', 'pin', `TEXT DEFAULT ''`);
+
 // 2.2.1) Migration: current_values.provider_balance / provider_debt
 // لعرض المتاح والدين لمزوّدي znet / murat_temiz في عمود الملاحظات (لا تدخل الحسابات)
 addColumn('current_values', 'provider_balance', `REAL`);

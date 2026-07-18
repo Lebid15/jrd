@@ -27,6 +27,7 @@ export default function ApiSettings() {
     kod: '',
     sifre: '',
     whatsapp_group_name: '',
+    pin: '',
   });
   const [testing, setTesting] = useState(false);
   const [allowedGroups, setAllowedGroups] = useState([]);
@@ -55,7 +56,7 @@ export default function ApiSettings() {
     setSelectedItem(item);
     // إذا كان البند من نوع bank، نضبط مباشرة بدون استدعاء api_configs
     if (item.type === 'bank') {
-      setConfig({ provider_type: 'kuveyt_turk', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
+      setConfig({ provider_type: 'kuveyt_turk', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '', pin: '' });
       return;
     }
     try {
@@ -68,12 +69,13 @@ export default function ApiSettings() {
           kod: res.data.kod || '',
           sifre: res.data.sifre || '',
           whatsapp_group_name: res.data.whatsapp_group_name || '',
+          pin: res.data.pin || '',
         });
       } else {
-        setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
+        setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '', pin: '' });
       }
     } catch {
-      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
+      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '', pin: '' });
     }
   };
 
@@ -121,7 +123,7 @@ export default function ApiSettings() {
       await api.delete(`/configs/${selectedItem.id}`);
       toast.success('تم إزالة الإعدادات');
       setSelectedItem(null);
-      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '' });
+      setConfig({ provider_type: 'znet', base_url: '', api_token: '', kod: '', sifre: '', whatsapp_group_name: '', pin: '' });
       load();
     } catch {
       toast.error('خطأ');
@@ -318,6 +320,22 @@ export default function ApiSettings() {
                       dir="ltr"
                     />
                   </div>
+                  {config.provider_type === 'bayi_alayatl' && (
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">رمز الـ PIN (الآلة الحاسبة)</label>
+                      <input
+                        type="text"
+                        value={config.pin}
+                        onChange={(e) => setConfig({ ...config, pin: e.target.value })}
+                        placeholder="مثال: 111111"
+                        className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                        dir="ltr"
+                        inputMode="numeric"
+                        autoComplete="off"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">الأرقام التي تضغطها على لوحة الآلة الحاسبة عند الدخول (يقبل أي عدد من الأرقام).</p>
+                    </div>
+                  )}
                   {config.provider_type === 'bayi_alayatl' && (
                     <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
                       <Bot size={16} className="inline ml-1" />

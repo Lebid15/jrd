@@ -15,7 +15,7 @@ router.get('/:itemId', (req, res) => {
 // Save/update API config for an item
 router.put('/:itemId', (req, res) => {
   const t = tid(req);
-  const { provider_type, base_url, api_token, kod, sifre, whatsapp_group_name } = req.body;
+  const { provider_type, base_url, api_token, kod, sifre, whatsapp_group_name, pin } = req.body;
   const itemId = req.params.itemId;
 
   // تأكّد ملكية الـ item
@@ -27,16 +27,17 @@ router.put('/:itemId', (req, res) => {
     .run('provider', provider_type, itemId, t);
 
   db.prepare(`
-    INSERT INTO api_configs (tenant_id, item_id, provider_type, base_url, api_token, kod, sifre, whatsapp_group_name)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO api_configs (tenant_id, item_id, provider_type, base_url, api_token, kod, sifre, whatsapp_group_name, pin)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(item_id) DO UPDATE SET
       provider_type = excluded.provider_type,
       base_url = excluded.base_url,
       api_token = excluded.api_token,
       kod = excluded.kod,
       sifre = excluded.sifre,
-      whatsapp_group_name = excluded.whatsapp_group_name
-  `).run(t, itemId, provider_type, base_url || '', api_token || '', kod || '', sifre || '', whatsapp_group_name || '');
+      whatsapp_group_name = excluded.whatsapp_group_name,
+      pin = excluded.pin
+  `).run(t, itemId, provider_type, base_url || '', api_token || '', kod || '', sifre || '', whatsapp_group_name || '', pin || '');
 
   res.json({ success: true });
 });

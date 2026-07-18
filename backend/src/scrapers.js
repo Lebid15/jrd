@@ -25,6 +25,7 @@ export function runBayiAlayatlScraper(config, { itemId, tenantId = 1 } = {}) {
     const phone = (config?.kod || '').trim();
     const password = (config?.sifre || '').trim();
     const loginUrl = (config?.base_url || '').trim() || 'http://bayi.alayatl.com/index.php?giris=true';
+    const pin = (config?.pin || '').trim();
 
     if (!phone || !password) {
       return reject(new Error('Missing phone (kod) or password (sifre)'));
@@ -46,6 +47,8 @@ export function runBayiAlayatlScraper(config, { itemId, tenantId = 1 } = {}) {
         BAYI_PHONE: phone,
         BAYI_PASSWORD: password,
         BAYI_LOGIN_URL: loginUrl,
+        // رمز الـ PIN الخاص بالعميل (يختلف لكل موقع). لو فارغ، السكرابر يستخدم الافتراضي.
+        ...(pin ? { BAYI_PIN: pin } : {}),
         HEADLESS: 'true',
         BROWSER_DATA_DIR: browserDir,
       },
