@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter, ChevronDown, Check, EyeOff, RotateCcw, Plus, Star } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
+import { useAuth } from '../AuthContext.jsx';
 
 const TABS = [
   { key: 'games', label: 'ألعاب', enabled: true },
@@ -14,7 +15,14 @@ const TABS = [
 const KONTOR_TABS = new Set(['turkcell', 'vodafone', 'avea']);
 
 export default function Prices() {
-  const [tab, setTab] = useState('games');
+  const { tenant } = useAuth();
+  const [tab, setTab] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`jrd_prices:${tenant?.id ?? 'x'}:tab`);
+      if (saved && TABS.some((t) => t.key === saved && t.enabled)) return saved;
+    } catch { /* تجاهل */ }
+    return 'games';
+  });
   const [sources, setSources] = useState([]);
   const [groups, setGroups] = useState([]);
   const [compareSources, setCompareSources] = useState([]);
@@ -55,8 +63,48 @@ export default function Prices() {
   }, []);
 
   useEffect(() => { load(tab); }, [load, tab]);
-  // عند تبديل التبويب تختلف المصادر — نعيد إظهار كل شيء ونصفّر اختيار الكونتور.
-  useEffect(() => { setHiddenSources(new Set()); setDefaultSrc(null); setExpandedSrc(new Set()); }, [tab]);
+
+  // مفاتيح التخزين المحلي لإعدادات الكونتور (مربوطة بالمستأجر + التبويب).
+  const lsBase = `jrd_prices:${tenant?.id ?? 'x'}`;
+  const dkey = (tb) => `${lsBase}:default:${tb}`;
+  const ekey = (tb) => `${lsBase}:expanded:${tb}`;
+
+  // حفظ آخر تبويب مفتوح ليُستعاد عند العودة للقسم.
+  useEffect(() => {
+    try { localStorage.setItem(`${lsBase}:tab`, tab); } catch { /* تجاهل */ }
+  }, [tab, lsBase]);
+
+  // عند تبديل التبويب: نعيد إظهار مصادر الألعاب، ونحمّل إعدادات الكونتور المحفوظة.
+  useEffect(() => {
+    setHiddenSources(new Set());
+    if (!KONTOR_TABS.has(tab)) { setDefaultSrc(null); setExpandedSrc(new Set()); return; }
+    try {
+      const d = localStorage.getItem(`${lsBase}:default:${tab}`);
+      const e = localStorage.getItem(`${lsBase}:expanded:${tab}`);
+      setDefaultSrc(d ? Number(d) : null);
+      setExpandedSrc(new Set(e ? JSON.parse(e) : []));
+    } catch {
+      setDefaultSrc(null); setExpandedSrc(new Set());
+    }
+  }, [tab, lsBase]);
+
+  // تغيير المزوّد الافتراضي (مع الحفظ). تغييره يصفّر الأعمدة المضافة.
+  const changeDefault = useCallback((id) => {
+    setDefaultSrc(id);
+    try {
+      if (id) localStorage.setItem(dkey(tab), String(id));
+      else localStorage.removeItem(dkey(tab));
+    } catch { /* تجاهل */ }
+  }, [tab, lsBase]);
+
+  // تغيير الأعمدة المضافة (مع الحفظ). يدعم دالة تحديث أو مجموعة مباشرة.
+  const changeExpanded = useCallback((updater) => {
+    setExpandedSrc((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      try { localStorage.setItem(ekey(tab), JSON.stringify([...next])); } catch { /* تجاهل */ }
+      return next;
+    });
+  }, [tab, lsBase]);
 
   // مصادر الكونتور = مزوّدو znet فقط (بركات/مراد تميز لا يبيعون كونتور).
   const kontorSources = useMemo(
@@ -68,6 +116,12 @@ export default function Prices() {
     () => (isKontor ? sources.filter((s) => s.provider_type === 'znet') : sources),
     [sources, isKontor],
   );
+
+  // لو المزوّد الافتراضي المحفوظ لم يعد ضمن المصادر (حُذف) → نصفّره.
+  useEffect(() => {
+    if (!isKontor || !defaultSrc || !kontorSources.length) return;
+    if (!kontorSources.some((s) => s.item_id === defaultSrc)) changeDefault(null);
+  }, [isKontor, defaultSrc, kontorSources, changeDefault]);
 
   const refresh = async () => {
     setRefreshing(true);
@@ -317,9 +371,9 @@ export default function Prices() {
           catFilter={catFilter}
           loading={loading}
           defaultId={defaultSrc}
-          setDefaultId={setDefaultSrc}
+          setDefaultId={changeDefault}
           expanded={expandedSrc}
-          setExpanded={setExpandedSrc}
+          setExpanded={changeExpanded}
           fmt={fmt}
         />
       ) : loading ? (
@@ -710,14 +764,14 @@ function KontorCompare({ sources, groups, q, catFilter, loading, defaultId, setD
                       </div>
                     </td>
                     <td className={`py-2 px-3 text-center border-l-4 border-amber-300 ${defCheapest ? 'bg-emerald-100 text-emerald-800 font-bold' : 'bg-amber-50 text-gray-800 font-semibold'}`}>
-                      {def && def.available ? fmt(def.price) : '—'}
+                      {def && def.available && def.price > 0 ? fmt(def.price) : '—'}
                     </td>
                     {shownOthers.map((s) => {
                       const cell = g.prices[s.item_id];
                       const isCheapest = cell && cheapest != null && cell.available && cell.price === cheapest;
                       return (
                         <td key={s.item_id} className={`py-2 px-3 text-center ${isCheapest ? 'bg-emerald-100 text-emerald-800 font-bold rounded' : 'text-gray-700'}`}>
-                          {cell && cell.available ? fmt(cell.price) : '—'}
+                          {cell && cell.available && cell.price > 0 ? fmt(cell.price) : '—'}
                         </td>
                       );
                     })}
