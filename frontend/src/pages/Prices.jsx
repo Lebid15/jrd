@@ -7,8 +7,8 @@ import { useAuth } from '../AuthContext.jsx';
 const TABS = [
   { key: 'games', label: 'ألعاب', enabled: true },
   { key: 'turkcell', label: 'تركسيل', enabled: true },
-  { key: 'vodafone', label: 'فودافون', enabled: false },
-  { key: 'avea', label: 'افيا', enabled: false },
+  { key: 'vodafone', label: 'فودافون', enabled: true },
+  { key: 'avea', label: 'افيا (ترك تيليكوم)', enabled: true },
 ];
 
 // تبويبات الكونتور (الموبايل) — واجهتها مختلفة عن الألعاب: مرتكزة على مزوّد افتراضي.
