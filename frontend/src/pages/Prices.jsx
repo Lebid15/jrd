@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter, ChevronDown, Check, EyeOff, RotateCcw } from 'lucide-react';
+import { RefreshCw, Tags, Search, Server, AlertCircle, Link2, X, ArrowUp, Filter, ChevronDown, Check, EyeOff, RotateCcw, Plus, Star } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api from '../api.js';
 
 const TABS = [
   { key: 'games', label: 'ألعاب', enabled: true },
-  { key: 'turkcell', label: 'تركسيل', enabled: false },
+  { key: 'turkcell', label: 'تركسيل', enabled: true },
   { key: 'vodafone', label: 'فودافون', enabled: false },
   { key: 'avea', label: 'افيا', enabled: false },
 ];
+
+// تبويبات الكونتور (الموبايل) — واجهتها مختلفة عن الألعاب: مرتكزة على مزوّد افتراضي.
+const KONTOR_TABS = new Set(['turkcell', 'vodafone', 'avea']);
 
 export default function Prices() {
   const [tab, setTab] = useState('games');
@@ -22,6 +25,11 @@ export default function Prices() {
   const [showTop, setShowTop] = useState(false);
   const [hiddenSources, setHiddenSources] = useState(() => new Set()); // مصادر مُزالة من المقارنة
   const scrollRef = useRef(null);
+
+  // تبويبات الكونتور: المزوّد الافتراضي + الأعمدة الإضافية المفتوحة
+  const isKontor = KONTOR_TABS.has(tab);
+  const [defaultSrc, setDefaultSrc] = useState(null);
+  const [expandedSrc, setExpandedSrc] = useState(() => new Set());
 
   // المطابقة اليدوية
   const [linkModal, setLinkModal] = useState(null); // { group, source }
@@ -47,8 +55,19 @@ export default function Prices() {
   }, []);
 
   useEffect(() => { load(tab); }, [load, tab]);
-  // عند تبديل التبويب تختلف المصادر — نعيد إظهار كل شيء.
-  useEffect(() => { setHiddenSources(new Set()); }, [tab]);
+  // عند تبديل التبويب تختلف المصادر — نعيد إظهار كل شيء ونصفّر اختيار الكونتور.
+  useEffect(() => { setHiddenSources(new Set()); setDefaultSrc(null); setExpandedSrc(new Set()); }, [tab]);
+
+  // مصادر الكونتور = مزوّدو znet فقط (بركات/مراد تميز لا يبيعون كونتور).
+  const kontorSources = useMemo(
+    () => compareSources.filter((s) => s.provider_type === 'znet'),
+    [compareSources],
+  );
+  // بطاقات "مصادر الأسعار": في تبويبات الكونتور نعرض مزوّدي znet فقط.
+  const summarySources = useMemo(
+    () => (isKontor ? sources.filter((s) => s.provider_type === 'znet') : sources),
+    [sources, isKontor],
+  );
 
   const refresh = async () => {
     setRefreshing(true);
@@ -226,14 +245,18 @@ export default function Prices() {
         <div className="flex items-center gap-2 text-gray-700 font-bold mb-3">
           <Server size={18} className="text-emerald-600" /> مصادر الأسعار
         </div>
-        {sources.length === 0 ? (
+        {summarySources.length === 0 ? (
           <div className="flex items-start gap-2 text-amber-700 bg-amber-50 rounded-lg p-3 text-sm">
             <AlertCircle size={18} className="shrink-0 mt-0.5" />
-            <span>لا توجد مصادر مدعومة. أضف مزوّد <b>znet</b> أو <b>barakat</b> من إعدادات API ليظهر هنا.</span>
+            <span>
+              {isKontor
+                ? <>لا يوجد مزوّد <b>znet</b> معدّ. أضِف مزوّداً من نوع <b>znet</b> في إعدادات API ليظهر هنا (الكونتور من znet فقط).</>
+                : <>لا توجد مصادر مدعومة. أضف مزوّد <b>znet</b> أو <b>barakat</b> من إعدادات API ليظهر هنا.</>}
+            </span>
           </div>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {sources.map((s) => (
+            {summarySources.map((s) => (
               <div key={s.item_id} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm">
                 <span className="font-semibold text-gray-800">{s.name}</span>
                 <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{s.provider_type}</span>
@@ -260,8 +283,8 @@ export default function Prices() {
         <CategorySelect value={catFilter} options={categories} onChange={setCatFilter} />
       </div>
 
-      {/* شريط إعادة إظهار المصادر المُزالة */}
-      {hiddenList.length > 0 && (
+      {/* شريط إعادة إظهار المصادر المُزالة (تبويب الألعاب فقط) */}
+      {!isKontor && hiddenList.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-4 bg-amber-50 border border-amber-200 rounded-lg p-3">
           <span className="text-sm text-amber-800 font-semibold flex items-center gap-1">
             <EyeOff size={15} /> مصادر مُزالة من المقارنة:
@@ -286,7 +309,20 @@ export default function Prices() {
       )}
 
       {/* Comparison table */}
-      {loading ? (
+      {isKontor ? (
+        <KontorCompare
+          sources={kontorSources}
+          groups={groups}
+          q={q}
+          catFilter={catFilter}
+          loading={loading}
+          defaultId={defaultSrc}
+          setDefaultId={setDefaultSrc}
+          expanded={expandedSrc}
+          setExpanded={setExpandedSrc}
+          fmt={fmt}
+        />
+      ) : loading ? (
         <div className="flex items-center justify-center h-64">
           <RefreshCw className="animate-spin-slow text-emerald-600" size={40} />
         </div>
@@ -539,5 +575,162 @@ function LinkModal({ group, source, packages, loading, search, setSearch, onPick
         </div>
       </div>
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// عرض الكونتور (تركسيل/فودافون/افيا): مرتكز على مزوّد افتراضي يختاره المستخدم.
+// - عمود الباقة (اسم + رقم الربط) + عمود سعر الافتراضي ← بإطار ملوّن.
+// - بقية المزوّدين يُضافون كأعمدة عند الضغط على "+".
+// ════════════════════════════════════════════════════════════════════════════
+function KontorCompare({ sources, groups, q, catFilter, loading, defaultId, setDefaultId, expanded, setExpanded, fmt }) {
+  const others = useMemo(() => sources.filter((s) => s.item_id !== defaultId), [sources, defaultId]);
+  const shownOthers = useMemo(() => others.filter((s) => expanded.has(s.item_id)), [others, expanded]);
+  const collapsedOthers = useMemo(() => others.filter((s) => !expanded.has(s.item_id)), [others, expanded]);
+  const defaultName = sources.find((s) => s.item_id === defaultId)?.name;
+
+  // الصفوف = باقات المزوّد الافتراضي (مع فلتر البحث/النوع).
+  const rows = useMemo(() => {
+    if (!defaultId) return [];
+    const needle = q.trim().toLowerCase();
+    return groups.filter((g) => {
+      if (!g.prices[defaultId]) return false;
+      if (catFilter && g.category !== catFilter) return false;
+      if (!needle) return true;
+      return (
+        (g.display_name || '').toLowerCase().includes(needle) ||
+        String(g.external_ref || '').toLowerCase().includes(needle) ||
+        (g.category || '').toLowerCase().includes(needle)
+      );
+    });
+  }, [groups, defaultId, q, catFilter]);
+
+  const addCol = (id) => setExpanded((prev) => { const n = new Set(prev); n.add(id); return n; });
+  const removeCol = (id) => setExpanded((prev) => { const n = new Set(prev); n.delete(id); return n; });
+
+  // أرخص سعر في الصف بين (الافتراضي + الأعمدة المفتوحة) — لتمييزه.
+  const cheapestOf = (g) => {
+    let min = null;
+    for (const id of [defaultId, ...shownOthers.map((s) => s.item_id)]) {
+      const c = g.prices[id];
+      if (c && c.available && c.price > 0) min = min == null ? c.price : Math.min(min, c.price);
+    }
+    return min;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="animate-spin-slow text-emerald-600" size={40} />
+      </div>
+    );
+  }
+  if (sources.length === 0) {
+    return (
+      <div className="bg-white rounded-xl shadow p-8 text-center text-gray-500">
+        لا توجد بيانات بعد. اضغط <b>«تحديث الأسعار»</b> لجلب باقات المزوّدين (znet).
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* اختيار المزوّد الافتراضي + أزرار إضافة الأعمدة */}
+      <div className="bg-white rounded-xl shadow p-4 mb-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex items-center gap-2 text-gray-700 font-bold shrink-0">
+          <Star size={18} className="text-amber-500" /> المزوّد الافتراضي
+        </div>
+        <select
+          value={defaultId || ''}
+          onChange={(e) => { setDefaultId(e.target.value ? Number(e.target.value) : null); setExpanded(new Set()); }}
+          className="border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 sm:w-64"
+        >
+          <option value="">— اختر مزوّداً ليكون الأساس —</option>
+          {sources.map((s) => <option key={s.item_id} value={s.item_id}>{s.name}</option>)}
+        </select>
+        {defaultId && collapsedOthers.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 sm:mr-auto">
+            <span className="text-xs text-gray-500">أضف مزوّداً للمقارنة:</span>
+            {collapsedOthers.map((s) => (
+              <button
+                key={s.item_id}
+                onClick={() => addCol(s.item_id)}
+                className="inline-flex items-center gap-1 text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg px-2 py-1"
+              >
+                <Plus size={13} /> {s.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!defaultId ? (
+        <div className="bg-white rounded-xl shadow p-8 text-center text-gray-500">
+          اختر <b>المزوّد الافتراضي</b> من القائمة أعلاه لعرض باقاته والمقارنة.
+        </div>
+      ) : (
+        <div className="relative bg-white rounded-xl shadow-lg overflow-auto max-h-[70vh]">
+          <table className="w-full min-w-[500px] text-sm">
+            <thead className="sticky top-0 z-20">
+              <tr className="bg-emerald-600 text-white">
+                <th className="py-3 px-3 text-right sticky right-0 z-30 bg-emerald-700 border-l-4 border-amber-400">
+                  الباقة <span className="text-emerald-200 font-normal text-xs">(رقم الربط)</span>
+                </th>
+                <th className="py-3 px-3 text-center whitespace-nowrap bg-emerald-700 border-l-4 border-amber-400">
+                  {defaultName} <span className="text-amber-300 text-xs">★ الافتراضي</span>
+                </th>
+                {shownOthers.map((s) => (
+                  <th key={s.item_id} className="py-3 px-3 text-center whitespace-nowrap">
+                    <div className="flex items-center justify-center gap-1">
+                      <span>{s.name}</span>
+                      <button
+                        onClick={() => removeCol(s.item_id)}
+                        className="text-white/70 hover:text-white hover:bg-white/20 rounded p-0.5"
+                        title="إخفاء هذا العمود"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((g) => {
+                const cheapest = cheapestOf(g);
+                const def = g.prices[defaultId];
+                const defCheapest = def && cheapest != null && def.available && def.price === cheapest;
+                return (
+                  <tr key={g.match_key} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="py-2 px-3 font-medium text-gray-800 sticky right-0 z-10 bg-white border-l-4 border-amber-300">
+                      <div className="truncate max-w-[240px]" title={g.display_name}>{g.display_name}</div>
+                      <div className="text-xs text-gray-400">
+                        {g.external_ref ? `رقم الربط: ${g.external_ref}` : ''}
+                        {g.category ? `${g.external_ref ? ' · ' : ''}${g.category}` : ''}
+                      </div>
+                    </td>
+                    <td className={`py-2 px-3 text-center border-l-4 border-amber-300 ${defCheapest ? 'bg-emerald-100 text-emerald-800 font-bold' : 'bg-amber-50 text-gray-800 font-semibold'}`}>
+                      {def && def.available ? fmt(def.price) : '—'}
+                    </td>
+                    {shownOthers.map((s) => {
+                      const cell = g.prices[s.item_id];
+                      const isCheapest = cell && cheapest != null && cell.available && cell.price === cheapest;
+                      return (
+                        <td key={s.item_id} className={`py-2 px-3 text-center ${isCheapest ? 'bg-emerald-100 text-emerald-800 font-bold rounded' : 'text-gray-700'}`}>
+                          {cell && cell.available ? fmt(cell.price) : '—'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {rows.length === 0 && (
+            <div className="p-6 text-center text-gray-400">لا باقات لهذا المزوّد (أو لا نتائج للبحث).</div>
+          )}
+        </div>
+      )}
+    </>
   );
 }

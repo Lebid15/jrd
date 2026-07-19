@@ -103,17 +103,76 @@ export async function fetchZdkPackages(config) {
   });
 }
 
+// znet: paket_listesi.php → نصّ خام لباقات الكونتور (الموبايل).
+// التنسيق: سجلّات مفصولة بـ `^`، وكل سجلّ 5 حقول مفصولة بـ `|`:
+//   OPERATOR | TIP | KUPÜR | FİYAT | اسم الباقة
+// مثال: Avea|3gCep|1517|622.00|Mobil WiFi 200 GB ^ Turkcell|Ses|1130|0.00|...
+// ملاحظة: يستخدم `bayi_kodu` (وليس `kod`) — على غرار أوامر الكونتور في znet.
+// الـ operator (Turkcell/Vodafone/Avea) يحدّده التبويب، فنفلتر الرد عليه.
+export async function fetchZnetKontorPackages(config, operator) {
+  const { base_url, kod, sifre } = config;
+  const cleanUrl = (base_url || '').replace(/\/+$/, '');
+  if (!cleanUrl || !kod || !sifre) {
+    throw new Error('Znet: base_url/kod/sifre مفقودة');
+  }
+  const url = `${cleanUrl}/servis/paket_listesi.php?bayi_kodu=${encodeURIComponent(kod)}&sifre=${encodeURIComponent(sifre)}`;
+  const res = await fetch(url, { timeout: 20000 });
+  const text = await res.text();
+  if (!text.trim()) {
+    throw new Error('Znet: رد فارغ (تحقّق من تفعيل API + IP الثابت)');
+  }
+  if (text.trimStart().startsWith('<')) {
+    throw new Error(`Znet paket_listesi رد HTML بدل البيانات: ${text.slice(0, 120)}`);
+  }
+  const wantOp = String(operator || '').toLowerCase();
+  const out = [];
+  for (const rawRec of text.split('^')) {
+    const parts = rawRec.split('|').map((s) => s.trim());
+    // إزالة الحقول الفارغة في الطرفين (فاصل `|^` يترك `|` زائدة)
+    while (parts.length && parts[0] === '') parts.shift();
+    while (parts.length && parts[parts.length - 1] === '') parts.pop();
+    if (parts.length < 5) continue;
+    const op = parts[0];
+    const tip = parts[1];
+    const kupur = parts[2];
+    const fiyat = parts[3];
+    const name = cleanText(parts.slice(4).join(' '));
+    if (!op || !name) continue;
+    if (wantOp && op.toLowerCase() !== wantOp) continue;
+    out.push({
+      external_ref: String(kupur || ''),   // رقم الربط (kupür) — يُعرض بجانب الاسم
+      name,
+      category: cleanText(tip),             // نوع الباقة (3gCep / Ses / ...) — للفلترة
+      denomination: String(kupur || ''),
+      price: parseFloat(fiyat) || 0,
+      currency: 'TRY',
+      is_available: 1,
+      match_key: makeMatchKey({ name }),    // مطابقة بالاسم عبر مواقع znet (نفس البرمجية)
+    });
+  }
+  return out;
+}
+
 const PRICE_PROVIDERS = {
   znet: fetchZnetPackages,
   barakat: fetchZdkPackages,
 };
 
-// هل يدعم هذا النوع جلب قائمة أسعار؟
-export function supportsPriceList(providerType) {
+// تبويبات الكونتور → اسم المشغّل في رد znet. الكونتور من znet فقط (لا zdk).
+export const KONTOR_OPERATORS = { turkcell: 'Turkcell', vodafone: 'Vodafone', avea: 'Avea' };
+
+// هل يدعم هذا النوع جلب قائمة أسعار لهذا التبويب؟
+export function supportsPriceList(providerType, tab = 'games') {
+  if (KONTOR_OPERATORS[tab]) return providerType === 'znet'; // كونتور: znet حصراً
   return Object.prototype.hasOwnProperty.call(PRICE_PROVIDERS, providerType);
 }
 
-export async function fetchPackages(providerType, config) {
+export async function fetchPackages(providerType, config, tab = 'games') {
+  const operator = KONTOR_OPERATORS[tab];
+  if (operator) {
+    if (providerType !== 'znet') return [];
+    return fetchZnetKontorPackages(config, operator);
+  }
   const fn = PRICE_PROVIDERS[providerType];
   if (!fn) throw new Error(`المزوّد لا يدعم قائمة الأسعار: ${providerType}`);
   return fn(config);

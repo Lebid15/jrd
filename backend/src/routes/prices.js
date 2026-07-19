@@ -96,10 +96,10 @@ router.post('/refresh', async (req, res) => {
 
   const results = [];
   for (const cfg of configs) {
-    if (!supportsPriceList(cfg.provider_type)) continue;
+    if (!supportsPriceList(cfg.provider_type, tab)) continue;
     if (onlyItemId && cfg.item_id !== onlyItemId) continue;
     try {
-      const pkgs = await fetchPackages(cfg.provider_type, cfg);
+      const pkgs = await fetchPackages(cfg.provider_type, cfg, tab);
       const write = db.transaction(() => {
         del.run(t, cfg.item_id, tab);
         for (const p of pkgs) {
