@@ -1,0 +1,147 @@
+# ============================================================
+# JRD — النشر التلقائي إلى Hetzner
+# ------------------------------------------------------------
+# يعمل عند كل push على main (أو يدوياً من تبويب Actions).
+# الفلسفة (نفس deploy/deploy.sh):
+#   - الكود يُعاد بناؤه داخل الحاوية على الخادم.
+#   - البيانات في /srv/jrd/data لا تُمَسّ إطلاقاً.
+#
+# الأسرار المطلوبة (Settings → Secrets and variables → Actions):
+#   SSH_PRIVATE_KEY   (إلزامي) محتوى المفتاح الخاص للدخول للخادم.
+#   SSH_KNOWN_HOSTS   (مُستحسَن) مخرجات: ssh-keyscan 167.233.124.62
+#                     لو غاب، نستخدم ssh-keyscan تلقائياً وقت التشغيل.
+#
+# المتغيّرات الاختيارية (Variables — ليست أسراراً):
+#   SSH_HOST     (افتراضي 167.233.124.62)
+#   SSH_USER     (افتراضي root)
+#   DEPLOY_PATH  (افتراضي /srv/jrd/app)
+#   HEALTH_URL   (افتراضي https://alaya.ahlacard.net/healthz)
+# ============================================================
+
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [main]
+    # لا تُشغّل نشراً كاملاً عند تعديل الوثائق فقط.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/**'
+      - '!.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'نوع النشر'
+        type: choice
+        default: normal
+        options: [normal, full]     # full = إعادة بناء app + caddy
+
+# لا تسمح بتداخل عمليتَي نشر على نفس الخادم — انتظر في الطابور.
+concurrency:
+  group: deploy-hetzner
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ----------------------------------------------------------
+  # 1) تحقّق سريع: يمنع نشر كود يفشل بناؤه (نفس ما سيحدث داخل Docker).
+  # ----------------------------------------------------------
+  validate:
+    name: Validate build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Build frontend (يكشف كسر البناء قبل النشر)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Syntax-check backend / bot / scrapers
+        run: |
+          set -e
+          npm ci --prefix backend --ignore-scripts
+          FILES=$(find backend/src bot/src messages-scraper/src scraper -name '*.js' 2>/dev/null)
+          for f in $FILES; do
+            node --check "$f"
+          done
+          echo "✓ فحص الصيغة نجح لكل ملفات JS"
+
+  # ----------------------------------------------------------
+  # 2) النشر: SSH إلى الخادم وتشغيل deploy/deploy.sh المعتمَد.
+  # ----------------------------------------------------------
+  deploy:
+    name: Deploy on server
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ vars.HEALTH_URL || 'https://alaya.ahlacard.net' }}
+    env:
+      SSH_HOST: ${{ vars.SSH_HOST || '167.233.124.62' }}
+      SSH_USER: ${{ vars.SSH_USER || 'root' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/srv/jrd/app' }}
+      HEALTH_URL: ${{ vars.HEALTH_URL || 'https://alaya.ahlacard.net/healthz' }}
+      DEPLOY_MODE: ${{ github.event.inputs.mode || 'normal' }}
+    steps:
+      - name: تجهيز مفتاح SSH ومضيف موثوق
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "::error::السرّ SSH_PRIVATE_KEY غير مضبوط. أضِفه في Settings → Secrets → Actions."
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          else
+            echo "::warning::SSH_KNOWN_HOSTS غير مضبوط — نستخدم ssh-keyscan (يُفضَّل تثبيته لاحقاً)."
+            ssh-keyscan -H "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: النشر على الخادم (git pull + rebuild + up)
+        run: |
+          set -euo pipefail
+          FLAG=""
+          [ "$DEPLOY_MODE" = "full" ] && FLAG="--full"
+          echo "===> النشر بوضع: ${DEPLOY_MODE}"
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes \
+              "${SSH_USER}@${SSH_HOST}" \
+              "set -e; cd '${DEPLOY_PATH}/deploy'; bash ./deploy.sh ${FLAG}"
+
+      - name: فحص الصحّة بعد النشر (/healthz)
+        run: |
+          set -uo pipefail
+          echo "===> فحص ${HEALTH_URL}"
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /tmp/health.txt -w '%{http_code}' --max-time 10 "$HEALTH_URL" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "✓ الخدمة سليمة (HTTP 200): $(cat /tmp/health.txt)"
+              exit 0
+            fi
+            echo "  محاولة $i/20 — HTTP $code — إعادة بعد 6 ثوانٍ…"
+            sleep 6
+          done
+          echo "::error::فشل فحص الصحّة بعد النشر — راجع سجلّات الخادم."
+          exit 1
+
+      - name: تنظيف المفتاح
+        if: always()
+        run: rm -f ~/.ssh/id_deploy
