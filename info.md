@@ -104,14 +104,40 @@ docker compose -f deploy/docker-compose.yml build app
 docker compose -f deploy/docker-compose.yml up -d app
 ```
 
-لاحقاً: سنُنشئ **GitHub Actions** ليؤتمت هذا عند كل push على `main`.
+---
+
+## النشر التلقائي — GitHub Actions ✅
+
+الأتمتة جاهزة في [.github/workflows/deploy.yml](.github/workflows/deploy.yml). عند كل push على `main`:
+
+1. **تحقّق (validate)**: بناء الـ frontend + فحص صيغة كل ملفات JS — يمنع نشر كود مكسور.
+2. **نشر (deploy)**: SSH إلى الخادم وتشغيل `deploy/deploy.sh` (git pull + rebuild app + up).
+3. **فحص صحّة**: طلب `https://alaya.ahlacard.net/healthz` والتأكّد من HTTP 200.
+
+يمكن أيضاً التشغيل يدوياً من تبويب **Actions → Deploy to Hetzner → Run workflow**
+(مع خيار `full` لإعادة بناء `app + caddy`).
+
+### الإعداد لمرّة واحدة (أسرار المستودع)
+
+Settings → Secrets and variables → Actions → **New repository secret**:
+
+| الاسم | القيمة | إلزامي |
+|------|--------|:------:|
+| `SSH_PRIVATE_KEY` | محتوى المفتاح الخاص كاملاً (مثلاً `cat ~/.ssh/jrd_hetzner_desktop`) | ✅ |
+| `SSH_KNOWN_HOSTS` | مخرجات `ssh-keyscan 167.233.124.62` (لتثبيت هوية الخادم) | مُستحسَن |
+
+> المفتاح العام المقابل مثبَّت مسبقاً على الخادم (راجع [deploy/keys/desktop.pub](deploy/keys/desktop.pub)).
+> لو لم تُضِف `SSH_KNOWN_HOSTS`، يستخدم الـ workflow `ssh-keyscan` تلقائياً (أقلّ أماناً).
+
+متغيّرات اختيارية (Variables، ليست أسراراً) لتجاوز الافتراضات:
+`SSH_HOST` (`167.233.124.62`) · `SSH_USER` (`root`) · `DEPLOY_PATH` (`/srv/jrd/app`) · `HEALTH_URL`.
 
 ---
 
 ## توزيع المهام
 
-- **Copilot**: يُعدِّل الكود → `git add` → `git commit` → `git push`. (Railway لم يعد يلتقط هذه التحديثات.)
-- **أنت**: تنفّذ `deploy/deploy.sh` على Hetzner عند الحاجة (أو ننتظر GitHub Actions لاحقاً).
+- **Copilot**: يُعدِّل الكود → `git add` → `git commit` → `git push` على `main` → **GitHub Actions ينشر تلقائياً**.
+- **النشر اليدوي** (احتياطي): تشغيل `deploy/deploy.sh` على Hetzner، أو زرّ *Run workflow* من تبويب Actions.
 
 ---
 
