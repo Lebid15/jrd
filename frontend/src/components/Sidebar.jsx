@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Archive, Image, DollarSign, Settings, Menu, X, Landmark, MessageSquare, CalendarRange, LogOut, User, Building2, Users, Tags } from 'lucide-react';
+import { LayoutDashboard, Archive, Image, DollarSign, Settings, Menu, X, Landmark, MessageSquare, CalendarRange, LogOut, User, Building2, Users, Tags, History } from 'lucide-react';
 import { useAuth } from '../AuthContext.jsx';
 
 const links = [
   { to: '/', icon: LayoutDashboard, label: 'الجرد' },
+  { to: '/log', icon: History, label: 'السجل' },
   { to: '/currency', icon: DollarSign, label: 'العملات' },
   { to: '/prices', icon: Tags, label: 'أسعار الباقات' },
   { to: '/bank', icon: Landmark, label: 'البنك' },

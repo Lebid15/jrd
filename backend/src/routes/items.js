@@ -66,25 +66,57 @@ router.put('/:id/values', (req, res) => {
   const itemId = req.params.id;
 
   // تأكّد أن الـ item يخص هذا المستأجر
-  const ownItem = db.prepare('SELECT id FROM items WHERE id = ? AND tenant_id = ?').get(itemId, t);
+  const ownItem = db.prepare('SELECT id, name, type FROM items WHERE id = ? AND tenant_id = ?').get(itemId, t);
   if (!ownItem) return res.status(404).json({ error: 'item_not_found' });
 
-  const existing = db.prepare('SELECT id FROM current_values WHERE item_id = ? AND tenant_id = ?').get(itemId, t);
-  if (existing) {
-    const updates = [];
-    const params = [];
-    if (try_amount !== undefined) { updates.push('try_amount = ?'); params.push(Math.round(try_amount * 100) / 100); }
-    if (usd_amount !== undefined) { updates.push('usd_amount = ?'); params.push(Math.round(usd_amount * 100) / 100); }
-    if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
-    if (updates.length > 0) {
-      params.push(itemId, t);
-      db.prepare(`UPDATE current_values SET ${updates.join(', ')} WHERE item_id = ? AND tenant_id = ?`).run(...params);
+  const r2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+  // البنود اليدوية فقط تُسجَّل في السجل (لا provider ولا bank — تلك تتحدّث تلقائياً).
+  const isManual = ownItem.type !== 'provider' && ownItem.type !== 'bank';
+
+  const existing = db.prepare('SELECT try_amount, usd_amount FROM current_values WHERE item_id = ? AND tenant_id = ?').get(itemId, t);
+
+  // احسب تغييرات القيم الرقمية (₺/$) قبل الكتابة — للتسجيل مع القيمة السابقة/الجديدة/الفرق.
+  const changes = [];
+  const considerField = (field, incoming) => {
+    if (incoming === undefined) return;
+    const newVal = r2(incoming || 0);
+    const oldVal = r2(existing ? (existing[field] || 0) : 0);
+    if (newVal !== oldVal) changes.push({ field, oldVal, newVal, delta: r2(newVal - oldVal) });
+  };
+  considerField('try_amount', try_amount);
+  considerField('usd_amount', usd_amount);
+
+  const applyUpdate = db.transaction(() => {
+    if (existing) {
+      const updates = [];
+      const params = [];
+      if (try_amount !== undefined) { updates.push('try_amount = ?'); params.push(r2(try_amount)); }
+      if (usd_amount !== undefined) { updates.push('usd_amount = ?'); params.push(r2(usd_amount)); }
+      if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+      if (updates.length > 0) {
+        params.push(itemId, t);
+        db.prepare(`UPDATE current_values SET ${updates.join(', ')} WHERE item_id = ? AND tenant_id = ?`).run(...params);
+      }
+    } else {
+      db.prepare(
+        'INSERT INTO current_values (tenant_id, item_id, try_amount, usd_amount, notes) VALUES (?, ?, ?, ?, ?)'
+      ).run(t, itemId, try_amount != null ? r2(try_amount) : 0, usd_amount != null ? r2(usd_amount) : 0, notes || '');
     }
-  } else {
-    db.prepare(
-      'INSERT INTO current_values (tenant_id, item_id, try_amount, usd_amount, notes) VALUES (?, ?, ?, ?, ?)'
-    ).run(t, itemId, try_amount || 0, usd_amount || 0, notes || '');
-  }
+
+    // سجّل تغييرات البنود اليدوية فقط.
+    if (isManual && changes.length > 0) {
+      const insertLog = db.prepare(`
+        INSERT INTO item_change_log (tenant_id, item_id, item_name, field, old_value, new_value, delta, changed_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const who = req.user?.email || '';
+      for (const c of changes) {
+        insertLog.run(t, Number(itemId), ownItem.name, c.field, c.oldVal, c.newVal, c.delta, who);
+      }
+    }
+  });
+
+  applyUpdate();
   res.json({ success: true });
 });
 

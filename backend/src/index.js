@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import itemsRouter from './routes/items.js';
+import logRouter from './routes/log.js';
 import inventoryRouter from './routes/inventory.js';
 import settingsRouter from './routes/settings.js';
 import photosRouter from './routes/photos.js';
@@ -54,6 +55,7 @@ app.post('/api/bank/sms-webhook', smsWebhookHandler);
 app.use('/api', requireAuth);
 app.use('/api/admin', requireAdmin, adminRouter); // requireAdmin داخلياً يستدعي requireAuth، لكن وضعناه صراحةً للوضوح.
 app.use('/api/items', itemsRouter);
+app.use('/api/log', logRouter);
 app.use('/api/inventory', inventoryRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/photos', photosRouter);

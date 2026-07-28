@@ -3,6 +3,7 @@ import { AuthProvider } from './AuthContext.jsx';
 import RequireAuth from './RequireAuth.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import Log from './pages/Log.jsx';
 import Archive from './pages/Archive.jsx';
 import MonthlyArchive from './pages/MonthlyArchive.jsx';
 import Photos from './pages/Photos.jsx';
@@ -22,6 +23,7 @@ function ProtectedShell() {
       <main className="flex-1 p-4 md:p-6 md:mr-64 mt-14 md:mt-0 overflow-auto">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/log" element={<Log />} />
           <Route path="/archive" element={<Archive />} />
           <Route path="/monthly" element={<MonthlyArchive />} />
           <Route path="/photos" element={<Photos />} />

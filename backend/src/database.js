@@ -114,6 +114,21 @@ db.exec(`
     notes TEXT DEFAULT ''
   );
 
+  -- item_change_log: سجل تغييرات البنود اليدوية (₺/$) — القيمة السابقة/الجديدة/الفرق.
+  -- لا يُسجَّل هنا أي تغيير تلقائي (مزوّدو API / البنك / واتساب) — فقط التعديل اليدوي.
+  CREATE TABLE IF NOT EXISTS item_change_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE,
+    item_id INTEGER,
+    item_name TEXT NOT NULL,
+    field TEXT NOT NULL,                 -- 'try_amount' | 'usd_amount'
+    old_value REAL NOT NULL DEFAULT 0,
+    new_value REAL NOT NULL DEFAULT 0,
+    delta REAL NOT NULL DEFAULT 0,
+    changed_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS photos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id INTEGER NOT NULL DEFAULT 1 REFERENCES tenants(id) ON DELETE CASCADE,
@@ -447,6 +462,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_whatsapp_transactions_tenant  ON whatsapp_transactions(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_monthly_inventories_tenant    ON monthly_inventories(tenant_id);
   CREATE INDEX IF NOT EXISTS idx_monthly_inventory_items_tenant ON monthly_inventory_items(tenant_id);
+
+  CREATE INDEX IF NOT EXISTS idx_item_change_log_tenant_created ON item_change_log(tenant_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_item_change_log_item          ON item_change_log(tenant_id, item_id);
 
   CREATE INDEX IF NOT EXISTS idx_bank_sms_log_created          ON bank_sms_log(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_inventories_tenant_created    ON inventories(tenant_id, created_at DESC);
