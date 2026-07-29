@@ -92,26 +92,27 @@ async function ensureLoggedIn(page) {
   }
 }
 
-// ─── قراءة بنية الصفحة (تُستخدم في كل الأوضاع) ───────────────────────────────
-// نُرجع: قائمة selects الفلاتر، فهرس عمود الكوبير، وصفوف الباقات مع API selects.
+// ─── قراءة بنية الصفحة (موجزة، للتشخيص + الأوضاع) ────────────────────────────
 async function readPage(page) {
   return page.evaluate(() => {
     const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const isApiSelect = (sel) => {
+      const opts = [...sel.options].map((o) => clean(o.textContent).toLowerCase());
+      return opts.includes('kapat') && opts.includes('manuel');
+    };
 
-    // كل selects في الصفحة مع خياراتها (للتشخيص + الفلاتر).
-    const allSelects = [...document.querySelectorAll('select')].map((sel, i) => ({
-      index: i,
-      id: sel.id || '',
-      name: sel.name || '',
-      value: sel.value,
-      options: [...sel.options].map((o) => clean(o.textContent)),
-    }));
+    // selects الفلاتر = كل select ليس من نوع API (المشغّل/النوع/غيرها).
+    const filterSelects = [...document.querySelectorAll('select')]
+      .filter((sel) => !isApiSelect(sel))
+      .map((sel, i) => ({
+        index: i, id: sel.id || '', name: sel.name || '', value: sel.value,
+        options: [...sel.options].map((o) => clean(o.textContent)).slice(0, 60),
+      }));
 
-    // عمود الكوبير: نبحث عن خلية رأس نصّها يحوي küpür/kpür.
+    // عمود الكوبير من صفّ الرأس.
     let kupurCol = -1;
     const headerCells = [];
-    const headRow = document.querySelector('table thead tr') ||
-                    document.querySelector('table tr');
+    const headRow = document.querySelector('table thead tr') || document.querySelector('table tr');
     if (headRow) {
       [...headRow.children].forEach((c, i) => {
         const t = clean(c.textContent);
@@ -120,133 +121,138 @@ async function readPage(page) {
       });
     }
 
-    // صفوف الباقات: أي <tr> فيه select routing (يحوي خيار Kapat + Manuel).
+    // عيّنة خيارات مزوّد (من أوّل select API) — لأرى صيغة الأسماء.
+    let apiOptionsSample = [];
+    const firstApi = [...document.querySelectorAll('select')].find(isApiSelect);
+    if (firstApi) apiOptionsSample = [...firstApi.options].map((o) => clean(o.textContent));
+
+    // صفوف الباقات (موجزة): الاسم + الكوبير + الاختيارات الحالية.
     const rows = [];
-    const isApiSelect = (sel) => {
-      const opts = [...sel.options].map((o) => clean(o.textContent).toLowerCase());
-      return opts.includes('kapat') && opts.includes('manuel');
-    };
     for (const tr of document.querySelectorAll('table tr')) {
       const selects = [...tr.querySelectorAll('select')].filter(isApiSelect);
       if (!selects.length) continue;
       const cells = [...tr.children].map((c) => clean(c.textContent));
-      // اسم الباقة: أوّل خلية غير فارغة غير رقمية.
       const nameCell = cells.find((t) => t && !/^\d/.test(t)) || cells[1] || '';
-      // الكوبير: من عمود الرأس إن عُرف، وإلّا أوّل رقم كبير في الصف.
-      let kupur = '';
-      if (kupurCol >= 0 && cells[kupurCol]) kupur = cells[kupurCol];
+      let kupur = (kupurCol >= 0 && cells[kupurCol]) ? cells[kupurCol] : '';
       if (!kupur) {
-        const nums = cells.map((t) => (t.match(/^\d[\d.,]*$/) ? t : null)).filter(Boolean);
-        kupur = nums.sort((a, b) => parseFloat(b) - parseFloat(a))[0] || '';
+        const nums = cells.filter((t) => /^\d[\d.,]*$/.test(t)).sort((a, b) => parseFloat(b) - parseFloat(a));
+        kupur = nums[0] || '';
       }
       rows.push({
         name: nameCell,
         kupur_raw: kupur,
-        api: selects.map((sel) => ({
-          value: sel.value,
-          selectedText: clean(sel.options[sel.selectedIndex]?.textContent || ''),
-          options: [...sel.options].map((o) => clean(o.textContent)),
-        })),
+        apiCount: selects.length,
+        apiSelected: selects.map((sel) => clean(sel.options[sel.selectedIndex]?.textContent || '')),
       });
     }
-    return { url: location.href, allSelects, headerCells, kupurCol, rowCount: rows.length, rows };
+    return { url: location.href, filterSelects, headerCells, kupurCol, apiOptionsSample, rowCount: rows.length, rows };
   });
 }
 
-// اختيار خيار في <select> عبر رقمه الفهرسي (index) بأمان + إطلاق change.
-async function selectApi(page, selectHandle, optionIndex) {
-  await selectHandle.evaluate((sel, idx) => {
-    sel.selectedIndex = idx;
-    sel.dispatchEvent(new Event('change', { bubbles: true }));
-  }, optionIndex);
+// اختيار خيار فلتر بأمان (locator يُعاد معالجته؛ يتحمّل navigation؛ لا يرمي أبداً).
+async function selectFilter(page, matchOption) {
+  try {
+    const metas = await page.$$eval('select', (sels) => sels.map((s, i) => ({
+      i, options: [...s.options].map((o) => o.textContent.trim()),
+    })));
+    for (const m of metas) {
+      const optIndex = matchOption(m.options);
+      if (optIndex >= 0) {
+        try {
+          await page.locator('select').nth(m.i).selectOption({ index: optIndex }, { timeout: 8000 });
+        } catch { /* قد تُدمَّر البيئة بسبب navigation — نتجاهل */ }
+        await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
+        await page.waitForTimeout(700);
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn('[filter] step skipped:', (e.message || '').split('\n')[0]);
+  }
+  return false;
 }
 
 async function applyFilter(page) {
-  // نحاول اختيار المشغّل + النوع من selects الفلاتر (heuristic؛ inspect يؤكّدها).
-  if (!OPERATOR && !TYPE) return;
-  const selects = await page.locator('select').elementHandles();
-  for (const h of selects) {
-    const opts = await h.evaluate((sel) => [...sel.options].map((o) => o.textContent.trim()));
-    // فلتر المشغّل: يحوي خيار "Operator" (placeholder).
-    if (OPERATOR && opts.some((t) => /operator/i.test(t))) {
-      const idx = opts.findIndex((t) => t.toLowerCase().includes(OPERATOR.toLowerCase()));
-      if (idx >= 0) { await selectApi(page, h, idx); await page.waitForTimeout(600); }
-    }
-    // فلتر النوع: خيار يحوي (TYPE) واسم المشغّل.
-    if (TYPE && opts.some((t) => t.includes(`(${TYPE})`))) {
-      const idx = opts.findIndex((t) => t.includes(`(${TYPE})`) &&
-        (!OPERATOR || t.toLowerCase().includes(OPERATOR.toLowerCase())));
-      if (idx >= 0) { await selectApi(page, h, idx); await page.waitForTimeout(800); }
-    }
+  if (OPERATOR) {
+    await selectFilter(page, (opts) => {
+      if (!opts.some((t) => /operator/i.test(t))) return -1;
+      return opts.findIndex((t) => t.toLowerCase().includes(OPERATOR.toLowerCase()));
+    });
   }
-  await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
-  await page.waitForTimeout(800);
+  if (TYPE) {
+    await selectFilter(page, (opts) => opts.findIndex((t) =>
+      t.includes(`(${TYPE})`) && (!OPERATOR || t.toLowerCase().includes(OPERATOR.toLowerCase()))));
+  }
 }
 
 // تطبيق الخطة على الصفوف (dryrun: بلا كتابة؛ apply: يكتب).
+// القراءة تتم دفعة واحدة (بلا مقابض تتلف بالتنقّل)؛ فالفحص آمن تماماً.
 async function applyPlan(page, write) {
-  const results = [];
-  const trHandles = await page.locator('table tr').elementHandles();
-  for (const tr of trHandles) {
-    const info = await tr.evaluate((row) => {
-      const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-      const isApi = (sel) => {
-        const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
-        return o.includes('kapat') && o.includes('manuel');
-      };
-      const selects = [...row.querySelectorAll('select')].filter(isApi);
-      if (!selects.length) return null;
-      const cells = [...row.children].map((c) => clean(c.textContent));
-      let kupur = '';
+  const pageRows = await page.evaluate(() => {
+    const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const stripPrice = (s) => clean(s.replace(/\s*\([^)]*\)\s*$/, ''));
+    const isApi = (sel) => {
+      const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
+      return o.includes('kapat') && o.includes('manuel');
+    };
+    const out = [];
+    [...document.querySelectorAll('table tr')].forEach((tr, rowIdx) => {
+      const selects = [...tr.querySelectorAll('select')].filter(isApi);
+      if (!selects.length) return;
+      const cells = [...tr.children].map((c) => clean(c.textContent));
       const nums = cells.filter((t) => /^\d[\d.,]*$/.test(t)).sort((a, b) => parseFloat(b) - parseFloat(a));
-      // الكوبير عادةً أكبر رقم في الصف (OpFiy أصغر، Ç.Şekli=0).
-      kupur = nums[0] || '';
+      const kupur = nums[0] || '';
       const name = cells.find((t) => t && !/^\d/.test(t)) || '';
-      return { name, kupur, apiCount: selects.length };
-    });
-    if (!info) continue;
-
-    const ref = (info.kupur.match(/-?\d+/) || [''])[0];
-    const wanted = PLAN[ref];
-    if (!wanted) { continue; }
-
-    // لكل خانة API نحدّد الخيار المطلوب.
-    const apiSelects = await tr.$$('select');
-    const apiOnly = [];
-    for (const h of apiSelects) {
-      const isApi = await h.evaluate((sel) => {
-        const o = [...sel.options].map((x) => x.textContent.trim().toLowerCase());
-        return o.includes('kapat') && o.includes('manuel');
+      out.push({
+        rowIdx, name, kupur,
+        selects: selects.map((sel) => [...sel.options].map((o) => ({
+          text: clean(o.textContent), name: stripPrice(o.textContent),
+        }))),
       });
-      if (isApi) apiOnly.push(h);
-    }
+    });
+    return out;
+  });
 
-    const rowRes = { ref, name: info.name, set: [], missing: [] };
-    for (let i = 0; i < wanted.length && i < apiOnly.length; i++) {
-      const target = wanted[i];
-      const h = apiOnly[i];
-      const optionIndex = await h.evaluate((sel, want) => {
-        const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-        const stripPrice = (s) => clean(s.replace(/\s*\([^)]*\)\s*$/, ''));
-        const opts = [...sel.options];
-        // Kapat → تطابق تام
-        if (want.toLowerCase() === 'kapat') {
-          return opts.findIndex((o) => clean(o.textContent).toLowerCase() === 'kapat');
-        }
-        return opts.findIndex((o) => stripPrice(o.textContent) === want);
-      }, target);
-
-      if (optionIndex < 0) { rowRes.missing.push(target); continue; }
-      if (write) {
-        await h.evaluate((sel, idx) => {
-          sel.selectedIndex = idx;
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-        }, optionIndex);
-        await page.waitForTimeout(250); // زينت يحفظ تلقائياً — نمهله
-      }
-      rowRes.set.push(`API${i + 1}=${target}`);
+  const results = [];
+  const writes = [];
+  for (const r of pageRows) {
+    const ref = (r.kupur.match(/-?\d+/) || [''])[0];
+    const wanted = PLAN[ref];
+    if (!wanted) continue;
+    const rowRes = { ref, name: r.name, set: [], missing: [] };
+    for (let i = 0; i < wanted.length && i < r.selects.length; i++) {
+      const want = wanted[i];
+      const opts = r.selects[i];
+      const optionIndex = want.toLowerCase() === 'kapat'
+        ? opts.findIndex((o) => o.text.toLowerCase() === 'kapat')
+        : opts.findIndex((o) => o.name === want);
+      if (optionIndex < 0) { rowRes.missing.push(want); continue; }
+      rowRes.set.push(`API${i + 1}=${want}`);
+      writes.push({ rowIdx: r.rowIdx, apiIdx: i, optionIndex });
     }
     results.push(rowRes);
+  }
+
+  // الكتابة (apply فقط): لكل خانة نُعيد تحديد الصفّ بفهرسه ونُطلق change.
+  if (write) {
+    for (const w of writes) {
+      try {
+        await page.evaluate(({ rowIdx, apiIdx, optionIndex }) => {
+          const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+          const isApi = (sel) => {
+            const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
+            return o.includes('kapat') && o.includes('manuel');
+          };
+          const tr = [...document.querySelectorAll('table tr')][rowIdx];
+          if (!tr) return;
+          const sel = [...tr.querySelectorAll('select')].filter(isApi)[apiIdx];
+          if (!sel) return;
+          sel.selectedIndex = optionIndex;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }, w);
+        await page.waitForTimeout(300); // زينت يحفظ تلقائياً — نمهله
+      } catch { /* navigation محتمل — نكمل */ }
+    }
   }
   return results;
 }
@@ -265,12 +271,17 @@ async function main() {
     page.setDefaultTimeout(NAV_TIMEOUT);
 
     await ensureLoggedIn(page);
-    await applyFilter(page);
 
     let out;
     if (MODE === 'inspect') {
-      out = { mode: 'inspect', ...(await readPage(page)) };
+      // قبل الفلتر: نرى selects الفلاتر في حالتها الأولى. ثم نطبّق الفلتر (بأمان)
+      // ونرى الصفوف بعده. كلاهما بلا أي كتابة.
+      const before = await readPage(page);
+      await applyFilter(page);
+      const after = await readPage(page);
+      out = { mode: 'inspect', operator: OPERATOR, type: TYPE, before, after };
     } else {
+      await applyFilter(page);
       const results = await applyPlan(page, MODE === 'apply');
       out = {
         mode: MODE,

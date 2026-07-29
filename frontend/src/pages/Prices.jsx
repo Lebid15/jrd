@@ -610,11 +610,9 @@ function RouteCheapestModal({ tab, defaultId, categories, fmt, onClose }) {
 
           {inspect && (
             <div className="p-4 border-t bg-gray-50 text-xs">
-              <div className="font-bold text-gray-600 mb-1">فحص بنية الصفحة (تشخيص):</div>
-              <div>الرابط: {inspect.url}</div>
-              <div>عدد الصفوف: {inspect.rowCount} · عمود الكوبير: {inspect.kupurCol}</div>
-              <div className="truncate">الأعمدة: {(inspect.headerCells || []).join(' | ')}</div>
-              <pre className="mt-2 max-h-40 overflow-auto bg-white border rounded p-2 text-[10px] leading-tight">{JSON.stringify(inspect.rows?.slice(0, 3), null, 1)}</pre>
+              <div className="font-bold text-gray-600 mb-1">فحص بنية الصفحة — انسخ كل النصّ بالأسفل وأرسله:</div>
+              <div>الصفوف بعد الفلتر: {inspect.after?.rowCount ?? '?'} · عمود الكوبير: {inspect.after?.kupurCol ?? '?'}</div>
+              <pre className="mt-2 max-h-56 overflow-auto bg-white border rounded p-2 text-[10px] leading-tight select-all">{JSON.stringify(inspect, null, 1)}</pre>
             </div>
           )}
         </div>
