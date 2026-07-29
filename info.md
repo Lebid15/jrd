@@ -106,38 +106,41 @@ docker compose -f deploy/docker-compose.yml up -d app
 
 ---
 
-## النشر التلقائي — GitHub Actions ✅
+## النشر التلقائي — cron على الخادم ✅
 
-الأتمتة جاهزة في [.github/workflows/deploy.yml](.github/workflows/deploy.yml). عند كل push على `main`:
+النشر يتم **كلياً داخل الخادم** عبر cron يفحص `main` كل دقيقتين، وعند أي دمج جديد
+يسحب الكود ويعيد بناء الحاوية وتشغيلها — بلا حاجة لأسرار على GitHub ولا SSH خارجي.
 
-1. **تحقّق (validate)**: بناء الـ frontend + فحص صيغة كل ملفات JS — يمنع نشر كود مكسور.
-2. **نشر (deploy)**: SSH إلى الخادم وتشغيل `deploy/deploy.sh` (git pull + rebuild app + up).
-3. **فحص صحّة**: طلب `https://alaya.ahlacard.net/healthz` والتأكّد من HTTP 200.
+- سكربت الفحص/النشر: [deploy/auto-deploy.sh](deploy/auto-deploy.sh)
+- سكربت التفعيل (مرّة واحدة): [deploy/enable-auto-deploy.sh](deploy/enable-auto-deploy.sh)
 
-يمكن أيضاً التشغيل يدوياً من تبويب **Actions → Deploy to Hetzner → Run workflow**
-(مع خيار `full` لإعادة بناء `app + caddy`).
+### التفعيل لمرّة واحدة (على الخادم)
 
-### الإعداد لمرّة واحدة (أسرار المستودع)
+```bash
+cd /srv/jrd/app
+git pull
+bash deploy/enable-auto-deploy.sh   # يثبّت الـ cron + نشر أوّلي
+```
 
-Settings → Secrets and variables → Actions → **New repository secret**:
+بعدها: أي دمج على `main` يُنشر تلقائياً خلال دقيقتين. سجل النشر: `/var/log/jrd-auto-deploy.log`.
 
-| الاسم | القيمة | إلزامي |
-|------|--------|:------:|
-| `SSH_PRIVATE_KEY` | محتوى المفتاح الخاص كاملاً (مثلاً `cat ~/.ssh/jrd_hetzner_desktop`) | ✅ |
-| `SSH_KNOWN_HOSTS` | مخرجات `ssh-keyscan 167.233.124.62` (لتثبيت هوية الخادم) | مُستحسَن |
+> **CI**: [.github/workflows/ci.yml](.github/workflows/ci.yml) يبني الـ frontend ويفحص الصيغة
+> عند كل Pull Request لالتقاط الكود المكسور قبل الدمج (لا ينشر — النشر مهمّة الـ cron).
 
-> المفتاح العام المقابل مثبَّت مسبقاً على الخادم (راجع [deploy/keys/desktop.pub](deploy/keys/desktop.pub)).
-> لو لم تُضِف `SSH_KNOWN_HOSTS`، يستخدم الـ workflow `ssh-keyscan` تلقائياً (أقلّ أماناً).
+### إيقاف/فحص النشر التلقائي
 
-متغيّرات اختيارية (Variables، ليست أسراراً) لتجاوز الافتراضات:
-`SSH_HOST` (`167.233.124.62`) · `SSH_USER` (`root`) · `DEPLOY_PATH` (`/srv/jrd/app`) · `HEALTH_URL`.
+```bash
+crontab -l                          # عرض المهمة
+crontab -l | grep -v auto-deploy | crontab -   # إيقافها
+tail -f /var/log/jrd-auto-deploy.log           # متابعة السجل
+```
 
 ---
 
 ## توزيع المهام
 
-- **Copilot**: يُعدِّل الكود → `git add` → `git commit` → `git push` على `main` → **GitHub Actions ينشر تلقائياً**.
-- **النشر اليدوي** (احتياطي): تشغيل `deploy/deploy.sh` على Hetzner، أو زرّ *Run workflow* من تبويب Actions.
+- **التطوير**: تعديل الكود → `git commit` → `git push` → فتح PR → **دمج** → الـ cron ينشر تلقائياً خلال دقيقتين.
+- **النشر اليدوي** (احتياطي): `bash deploy/auto-deploy.sh` أو `deploy/deploy.sh` على الخادم.
 
 ---
 
