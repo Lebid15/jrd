@@ -662,11 +662,12 @@ function KontorCompare({ sources, groups, q, catFilter, loading, defaultId, setD
   const addCol = (id) => setExpanded((prev) => { const n = new Set(prev); n.add(id); return n; });
   const removeCol = (id) => setExpanded((prev) => { const n = new Set(prev); n.delete(id); return n; });
 
-  // أرخص سعر في الصف بين (الافتراضي + الأعمدة المفتوحة) — لتمييزه.
+  // أرخص سعر بين المزوّدين الآخرين فقط (نستثني الافتراضي عمداً) — لتمييز الأرخص
+  // في المقارنة. الافتراضي «باقاتي» لا يُلوَّن بالأخضر حتى لو كان الأرخص.
   const cheapestOf = (g) => {
     let min = null;
-    for (const id of [defaultId, ...shownOthers.map((s) => s.item_id)]) {
-      const c = g.prices[id];
+    for (const s of shownOthers) {
+      const c = g.prices[s.item_id];
       if (c && c.available && c.price > 0) min = min == null ? c.price : Math.min(min, c.price);
     }
     return min;
@@ -753,7 +754,6 @@ function KontorCompare({ sources, groups, q, catFilter, loading, defaultId, setD
               {rows.map((g) => {
                 const cheapest = cheapestOf(g);
                 const def = g.prices[defaultId];
-                const defCheapest = def && cheapest != null && def.available && def.price === cheapest;
                 return (
                   <tr key={g.match_key} className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-2 px-3 font-medium text-gray-800 sticky right-0 z-10 bg-white border-l-4 border-amber-300">
@@ -763,7 +763,7 @@ function KontorCompare({ sources, groups, q, catFilter, loading, defaultId, setD
                         {g.category ? `${g.external_ref ? ' · ' : ''}${g.category}` : ''}
                       </div>
                     </td>
-                    <td className={`py-2 px-3 text-center border-l-4 border-amber-300 ${defCheapest ? 'bg-emerald-100 text-emerald-800 font-bold' : 'bg-amber-50 text-gray-800 font-semibold'}`}>
+                    <td className="py-2 px-3 text-center border-l-4 border-amber-300 bg-amber-50 text-gray-800 font-semibold">
                       {def && def.available && def.price > 0 ? fmt(def.price) : '—'}
                     </td>
                     {shownOthers.map((s) => {
