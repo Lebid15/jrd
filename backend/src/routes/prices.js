@@ -2,6 +2,8 @@ import { Router } from 'express';
 import db from '../database.js';
 import { tid } from '../tenantHelpers.js';
 import { fetchPackages, supportsPriceList, cleanText, makeMatchKey, KONTOR_OPERATORS } from '../priceProviders.js';
+import { computeRoutingPlan } from '../routeCheapest.js';
+import { runTariffRouter } from '../scrapers.js';
 
 const router = Router();
 
@@ -72,13 +74,9 @@ router.delete('/link', (req, res) => {
   res.json({ success: true });
 });
 
-// تحديث الأسعار: يجلب الباقات من كل المصادر المدعومة (أو مصدر واحد) ويخزّن لقطة.
-router.post('/refresh', async (req, res) => {
-  const t = tid(req);
-  const tab = req.body?.tab || 'games';
-  if (!TABS.has(tab)) return res.status(400).json({ error: 'bad_tab' });
-  const onlyItemId = req.body?.item_id ? Number(req.body.item_id) : null;
-
+// جلب باقات كل المصادر المدعومة (أو مصدر واحد) لتبويب وتخزين لقطة. مُشترَك بين
+// /refresh و /route/preview (خيار "حدّث الأسعار ثم وجّه").
+async function refreshTab(t, tab, onlyItemId = null) {
   const configs = db.prepare(`
     SELECT ac.*, i.name AS item_name
     FROM api_configs ac
@@ -116,6 +114,27 @@ router.post('/refresh', async (req, res) => {
       results.push({ item_id: cfg.item_id, name: cfg.item_name, success: false, error: err.message });
     }
   }
+  return results;
+}
+
+// إعداد روبوت bayi_alayatl لهذا المستأجر (نفس دخول موقع زينت).
+function getBayiConfig(t) {
+  return db.prepare(`
+    SELECT ac.*, ac.item_id AS item_id
+    FROM api_configs ac
+    JOIN items i ON i.id = ac.item_id AND i.tenant_id = ac.tenant_id
+    WHERE ac.tenant_id = ? AND ac.provider_type = 'bayi_alayatl' AND i.is_active = 1
+    LIMIT 1
+  `).get(t);
+}
+
+// تحديث الأسعار: يجلب الباقات من كل المصادر المدعومة (أو مصدر واحد) ويخزّن لقطة.
+router.post('/refresh', async (req, res) => {
+  const t = tid(req);
+  const tab = req.body?.tab || 'games';
+  if (!TABS.has(tab)) return res.status(400).json({ error: 'bad_tab' });
+  const onlyItemId = req.body?.item_id ? Number(req.body.item_id) : null;
+  const results = await refreshTab(t, tab, onlyItemId);
   res.json({ tab, results });
 });
 
@@ -236,6 +255,68 @@ router.get('/compare', (req, res) => {
   );
 
   res.json({ tab, sources, groups });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// «ربط حسب الأرخص» — توجيه باقات الكونتور تلقائياً على لوحة زينت.
+// ════════════════════════════════════════════════════════════════════════════
+
+// معاينة الخطة (آمن، بلا روبوت): يحدّث الأسعار (اختياري) ثم يحسب لكل باقة
+// ترتيب المزوّدين الأرخص (أوّل 3)، مستثنياً الافتراضي.
+router.post('/route/preview', async (req, res) => {
+  const t = tid(req);
+  const { tab = 'turkcell', type, default_item_id, refresh = true } = req.body || {};
+  if (!KONTOR_OPERATORS[tab]) return res.status(400).json({ error: 'bad_tab' });
+  if (!type) return res.status(400).json({ error: 'type_required' });
+
+  let refreshResults = null;
+  if (refresh) {
+    try { refreshResults = await refreshTab(t, tab); }
+    catch (e) { return res.status(500).json({ error: 'refresh_failed: ' + e.message }); }
+  }
+
+  const plan = computeRoutingPlan(db, t, tab, type, {
+    defaultItemId: default_item_id ? Number(default_item_id) : null,
+    topN: 3,
+  });
+  res.json({ tab, type, operator: KONTOR_OPERATORS[tab], count: plan.length, plan, refresh: refreshResults });
+});
+
+// تشغيل الروبوت على زينت: mode = inspect | dryrun | apply.
+// inspect: يُرجع بنية الصفحة (لضبط المُحدِّدات). dryrun: يطابق بلا كتابة. apply: يكتب.
+router.post('/route/run', async (req, res) => {
+  const t = tid(req);
+  const { tab = 'turkcell', type, mode = 'dryrun', plan } = req.body || {};
+  if (!KONTOR_OPERATORS[tab]) return res.status(400).json({ error: 'bad_tab' });
+  if (!['inspect', 'dryrun', 'apply'].includes(mode)) return res.status(400).json({ error: 'bad_mode' });
+
+  const cfg = getBayiConfig(t);
+  if (!cfg) {
+    return res.status(400).json({ error: 'no_bayi_config: أضِف بند «روبوت موقع Bayi Alayatl» في إعدادات API أولاً.' });
+  }
+
+  // حوّل الخطة إلى خريطة { رقم الربط: [أسماء API1..N] }.
+  const planMap = {};
+  for (const row of (plan || [])) {
+    if (row && row.link_ref) planMap[String(row.link_ref)] = (row.slots || []).map((s) => s.name);
+  }
+  if (mode !== 'inspect' && Object.keys(planMap).length === 0) {
+    return res.status(400).json({ error: 'empty_plan: لا توجد خطة للتنفيذ (شغّل المعاينة أولاً).' });
+  }
+
+  try {
+    const result = await runTariffRouter(cfg, {
+      mode,
+      operator: KONTOR_OPERATORS[tab],
+      type: type || '',
+      plan: planMap,
+      itemId: cfg.item_id,
+      tenantId: t,
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'robot_failed: ' + e.message });
+  }
 });
 
 export default router;
