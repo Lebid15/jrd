@@ -247,7 +247,7 @@ export default function Dashboard() {
                       onChange={(e) => handleLocalChange(item.id, 'try_amount', e.target.value)}
                       onFocus={handleFocus}
                       onBlur={(e) => updateValue(item.id, 'try_amount', e.target.value)}
-                      className={`table-input text-sm md:text-base ${(item.try_amount || 0) < 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}
+                      className={`table-input text-sm md:text-base min-w-[5rem] md:min-w-[7rem] ${(item.try_amount || 0) < 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}
                       step="0.01"
                       placeholder="0"
                     />
@@ -259,7 +259,7 @@ export default function Dashboard() {
                       onChange={(e) => handleLocalChange(item.id, 'usd_amount', e.target.value)}
                       onFocus={handleFocus}
                       onBlur={(e) => updateValue(item.id, 'usd_amount', e.target.value)}
-                      className={`table-input text-sm md:text-base ${(item.usd_amount || 0) < 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}
+                      className={`table-input text-sm md:text-base min-w-[5rem] md:min-w-[7rem] ${(item.usd_amount || 0) < 0 ? 'text-red-600 font-bold' : 'text-gray-700'}`}
                       step="0.01"
                       placeholder="0"
                     />
@@ -467,7 +467,7 @@ function AmountCell({ item, field, handleLocalChange, updateValue, handleFocus }
         onChange={(e) => handleLocalChange(item.id, field, e.target.value)}
         onFocus={handleFocus}
         onBlur={(e) => updateValue(item.id, field, e.target.value)}
-        className={`table-input text-sm md:text-base ${isNeg ? 'text-red-600 font-bold' : 'text-gray-700'}`}
+        className={`table-input text-sm md:text-base min-w-[5rem] md:min-w-[7rem] ${isNeg ? 'text-red-600 font-bold' : 'text-gray-700'}`}
         step="0.01"
         placeholder="0"
       />

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import db from '../database.js';
 import { tid } from '../tenantHelpers.js';
-import { fetchPackages, supportsPriceList, cleanText, makeMatchKey } from '../priceProviders.js';
+import { fetchPackages, supportsPriceList, cleanText, makeMatchKey, KONTOR_OPERATORS } from '../priceProviders.js';
 
 const router = Router();
 
@@ -137,8 +137,18 @@ router.get('/compare', (req, res) => {
   const pkgByRef = new Map();
   for (const r of rows) pkgByRef.set(`${r.source_item_id}|${r.external_ref}`, r);
 
-  // إعادة حساب مفتاح المطابقة من الاسم (يعمل فوراً على البيانات المخزّنة دون حاجة لتحديث).
-  const keyOf = (r) => makeMatchKey({ name: r.name }) || r.match_key || String(r.name || '').toLowerCase();
+  // إعادة حساب مفتاح المطابقة (يعمل فوراً على البيانات المخزّنة دون حاجة لتحديث).
+  // - الكونتور (تركسيل/فودافون/افيا): المطابقة بـ (النوع + رقم الربط) لأنها ثابتة
+  //   عبر مواقع znet، بينما الاسم يخصّصه كل بائع فيختلف فتتبعثر الباقة على صفوف.
+  // - الألعاب: المطابقة بالاسم (external_ref غير ثابت بين المواقع في pin_listesi).
+  const isKontor = !!KONTOR_OPERATORS[tab];
+  const keyOf = (r) => {
+    if (isKontor) {
+      const ref = String(r.external_ref ?? '').trim();
+      if (ref) return makeMatchKey({ name: `${r.category || ''} ${ref}` });
+    }
+    return makeMatchKey({ name: r.name }) || r.match_key || String(r.name || '').toLowerCase();
+  };
 
   // المصادر الموجودة فعلاً في اللقطة
   const sourcesMap = new Map();

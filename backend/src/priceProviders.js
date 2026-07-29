@@ -147,7 +147,9 @@ export async function fetchZnetKontorPackages(config, operator) {
       price: parseFloat(fiyat) || 0,
       currency: 'TRY',
       is_available: 1,
-      match_key: makeMatchKey({ name }),    // مطابقة بالاسم عبر مواقع znet (نفس البرمجية)
+      // مطابقة الكونتور بـ (النوع + رقم الربط) لا بالاسم: الـ kupür/tip ثابتان عبر
+      // كل مواقع znet (كتالوج المشغّل واحد)، بينما الاسم يخصّصه كل بائع فيختلف.
+      match_key: makeMatchKey({ name: `${cleanText(tip)} ${kupur}` }),
     });
   }
   return out;
