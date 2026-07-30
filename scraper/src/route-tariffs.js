@@ -185,74 +185,78 @@ async function applyFilter(page) {
   }
 }
 
-// تطبيق الخطة على الصفوف (dryrun: بلا كتابة؛ apply: يكتب).
-// القراءة تتم دفعة واحدة (بلا مقابض تتلف بالتنقّل)؛ فالفحص آمن تماماً.
-async function applyPlan(page, write) {
-  const pageRows = await page.evaluate(() => {
+// يضبط خانة API واحدة لصفّ محدَّد برقم ربطه — عملية ذرّية داخل الصفحة.
+// يُعيد إيجاد الصفّ برقم الربط في كل مرّة (يتحمّل إعادة التحميل وانزياح الفهارس).
+// status: set | already | missing | no_slot | row_not_found
+async function setOneSlot(page, ref, apiIdx, want, write) {
+  return page.evaluate(({ ref, apiIdx, want, write }) => {
     const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
     const stripPrice = (s) => clean(s.replace(/\s*\([^)]*\)\s*$/, ''));
     const isApi = (sel) => {
       const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
       return o.includes('kapat') && o.includes('manuel');
     };
-    const out = [];
-    [...document.querySelectorAll('table tr')].forEach((tr, rowIdx) => {
+    const norm = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
+
+    // ابحث عن الصفّ برقم الربط (أكبر رقم في الصف = الكوبير).
+    let row = null, rowName = '';
+    for (const tr of document.querySelectorAll('table tr')) {
       const selects = [...tr.querySelectorAll('select')].filter(isApi);
-      if (!selects.length) return;
+      if (!selects.length) continue;
       const cells = [...tr.children].map((c) => clean(c.textContent));
       const nums = cells.filter((t) => /^\d[\d.,]*$/.test(t)).sort((a, b) => parseFloat(b) - parseFloat(a));
-      const kupur = nums[0] || '';
-      const name = cells.find((t) => t && !/^\d/.test(t)) || '';
-      out.push({
-        rowIdx, name, kupur,
-        selects: selects.map((sel) => [...sel.options].map((o) => ({
-          text: clean(o.textContent), name: stripPrice(o.textContent),
-        }))),
-      });
-    });
-    return out;
-  });
+      if (norm(nums[0] || '') === String(ref)) {
+        row = tr; rowName = cells.find((t) => t && !/^\d/.test(t)) || ''; break;
+      }
+    }
+    if (!row) return { status: 'row_not_found' };
 
+    const selects = [...row.querySelectorAll('select')].filter(isApi);
+    if (apiIdx >= selects.length) return { status: 'no_slot', name: rowName };
+    const sel = selects[apiIdx];
+    const opts = [...sel.options];
+    const idx = want.toLowerCase() === 'kapat'
+      ? opts.findIndex((o) => clean(o.textContent).toLowerCase() === 'kapat')
+      : opts.findIndex((o) => stripPrice(o.textContent) === want);
+    if (idx < 0) return { status: 'missing', name: rowName };
+    if (sel.selectedIndex === idx) return { status: 'already', name: rowName };
+    if (write) {
+      sel.selectedIndex = idx;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return { status: 'set', name: rowName };
+  }, { ref, apiIdx, want, write });
+}
+
+// تطبيق الخطة تسلسلياً: لكل باقة (برقم ربطها) نضبط API1 ثم API2 ثم API3،
+// منتظرين إعادة التحميل بعد كل اختيار. Kapat = نتركها مغلقة (لا نكتب).
+// dryrun (write=false): لا يكتب ولا ينتظر — يتحقّق فقط من إيجاد الصفوف والأسماء.
+async function applyPlan(page, write) {
   const results = [];
-  const writes = [];
-  for (const r of pageRows) {
-    const ref = (r.kupur.match(/-?\d+/) || [''])[0];
-    const wanted = PLAN[ref];
-    if (!wanted) continue;
-    const rowRes = { ref, name: r.name, set: [], missing: [] };
-    for (let i = 0; i < wanted.length && i < r.selects.length; i++) {
+  for (const [ref, wanted] of Object.entries(PLAN)) {
+    const rowRes = { ref, name: '', set: [], missing: [], note: '' };
+    for (let i = 0; i < wanted.length; i++) {
       const want = wanted[i];
-      const opts = r.selects[i];
-      const optionIndex = want.toLowerCase() === 'kapat'
-        ? opts.findIndex((o) => o.text.toLowerCase() === 'kapat')
-        : opts.findIndex((o) => o.name === want);
-      if (optionIndex < 0) { rowRes.missing.push(want); continue; }
-      rowRes.set.push(`API${i + 1}=${want}`);
-      writes.push({ rowIdx: r.rowIdx, apiIdx: i, optionIndex });
+      if (String(want).toLowerCase() === 'kapat') continue; // اتركها مغلقة (Kapat افتراضي)
+      const r = await setOneSlot(page, ref, i, want, write);
+      if (r.name) rowRes.name = r.name;
+      if (r.status === 'set' || r.status === 'already') {
+        rowRes.set.push(`API${i + 1}=${want}`);
+        if (write && r.status === 'set') {
+          // زينت يُعيد التحميل/الحفظ — ننتظر ثم نُعيد التحقّق من بقاء الفلتر.
+          await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
+          await page.waitForTimeout(500);
+        }
+      } else if (r.status === 'missing') {
+        rowRes.missing.push(want);
+        break; // الخانة التالية لا تُفتح إن لم تُضبط هذه (خانات تصاعدية)
+      } else if (r.status === 'no_slot') {
+        rowRes.note = 'no_more_slots'; break;
+      } else if (r.status === 'row_not_found') {
+        rowRes.note = 'row_not_found (قد تكون في صفحة أخرى)'; break;
+      }
     }
     results.push(rowRes);
-  }
-
-  // الكتابة (apply فقط): لكل خانة نُعيد تحديد الصفّ بفهرسه ونُطلق change.
-  if (write) {
-    for (const w of writes) {
-      try {
-        await page.evaluate(({ rowIdx, apiIdx, optionIndex }) => {
-          const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-          const isApi = (sel) => {
-            const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
-            return o.includes('kapat') && o.includes('manuel');
-          };
-          const tr = [...document.querySelectorAll('table tr')][rowIdx];
-          if (!tr) return;
-          const sel = [...tr.querySelectorAll('select')].filter(isApi)[apiIdx];
-          if (!sel) return;
-          sel.selectedIndex = optionIndex;
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-        }, w);
-        await page.waitForTimeout(300); // زينت يحفظ تلقائياً — نمهله
-      } catch { /* navigation محتمل — نكمل */ }
-    }
   }
   return results;
 }
