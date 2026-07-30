@@ -91,7 +91,7 @@ export function runBayiAlayatlScraper(config, { itemId, tenantId = 1 } = {}) {
  *   plan: { '<رقم الربط>': ['اسم1','اسم2','اسم3'] }  (Kapat لإغلاق الخانة)
  * يُرجع كائن النتيجة من السكرابر (RESULT_JSON).
  */
-export function runTariffRouter(config, { mode = 'dryrun', operator, type, plan = {}, itemId, tenantId = 1 } = {}) {
+export function runTariffRouter(config, { mode = 'dryrun', action = 'route', operator, type, plan = {}, itemId, tenantId = 1 } = {}) {
   const phone = (config?.kod || '').trim();
   const password = (config?.sifre || '').trim();
   const loginUrl = (config?.base_url || '').trim() || 'http://bayi.alayatl.com/index.php?giris=true';
@@ -108,6 +108,7 @@ export function runTariffRouter(config, { mode = 'dryrun', operator, type, plan 
     ...(pin ? { BAYI_PIN: pin } : {}),
     BROWSER_DATA_DIR: browserDirFor(tenantId, itemId),
     ROUTE_MODE: mode,
+    ROUTE_ACTION: action || 'route',
     ROUTE_OPERATOR: operator || '',
     ROUTE_TYPE: type || '',
     ROUTE_PLAN: JSON.stringify(plan || {}),

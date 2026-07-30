@@ -595,6 +595,28 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
     } finally { setBusy(false); setPhase(''); }
   };
 
+  // الباقات غير المتوفّرة لدى أي مزوّد = كل خاناتها Kapat (موجودة في الافتراضي فقط).
+  const unavailable = (plan || []).filter((p) => (p.slots || []).length && p.slots.every((s) => s.name === 'Kapat'));
+
+  // تعطيل غير المتوفّرة (Pasif Et) على لوحة زينت.
+  const deactivate = async (mode) => {
+    if (!unavailable.length) return;
+    if (mode === 'apply' && !confirm(`سيضغط الروبوت «Pasif Et» لتعطيل ${unavailable.length} باقة غير متوفّرة على لوحة زينت. متابعة؟`)) return;
+    setBusy(true);
+    setPhase(mode === 'apply' ? 'يعطّل الباقات غير المتوفّرة…' : 'يطابق غير المتوفّرة بدون تغيير…');
+    setResult(null); setInspect(null);
+    try {
+      const res = await api.post('/prices/route/run', { tab, type, mode, action: 'deactivate', plan: unavailable });
+      setResult(res.data);
+      if (mode === 'apply') {
+        if (res.data?.pasif?.clicked) toast.success(`تم تعطيل ${res.data?.checked || 0} باقة`);
+        else toast.warn('لم يُعثر على زر «Pasif Et» — تحقّق من الفلتر/الصفحة');
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.error || 'خطأ في التعطيل', { autoClose: 9000 });
+    } finally { setBusy(false); setPhase(''); }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -675,6 +697,23 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
           )}
         </div>
 
+        {/* تعطيل الباقات غير المتوفّرة لدى أي مزوّد (Pasif Et) — كونتور فقط */}
+        {tab !== 'games' && plan?.length > 0 && unavailable.length > 0 && (
+          <div className="mx-4 mb-1 mt-2 p-3 rounded-lg bg-amber-50 border border-amber-200 flex flex-wrap items-center gap-2">
+            <div className="text-xs text-amber-800 mr-auto">
+              <span className="font-bold">{unavailable.length}</span> باقة غير متوفّرة لدى أي مزوّد (كل الخانات Kapat) — موجودة في الافتراضي فقط.
+            </div>
+            <button onClick={() => deactivate('dryrun')} disabled={busy}
+              className="inline-flex items-center gap-1 bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50">
+              فحص التعطيل (بدون تغيير)
+            </button>
+            <button onClick={() => deactivate('apply')} disabled={busy}
+              className="inline-flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold disabled:opacity-50">
+              تعطيل غير المتوفّرة (Pasif Et)
+            </button>
+          </div>
+        )}
+
         {/* أزرار التنفيذ */}
         <div className="p-4 border-t flex flex-wrap items-center gap-2">
           <button onClick={() => run('inspect')} disabled={busy}
@@ -690,11 +729,18 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
             </button>
           </div>
         </div>
-        {result && (
+        {result && result.action === 'deactivate' ? (
+          <div className="px-4 pb-3 text-xs text-gray-600">
+            التعطيل ({result.mode}): حُدِّد {result.checked} باقة من أصل {result.planned}
+            {result.mode === 'apply' && <span> · زر Pasif Et: {result.pasif?.clicked ? '✓ ضُغط' : '✗ لم يُعثر عليه'}</span>}
+            {(result.results || []).some((r) => r.status === 'row_not_found') &&
+              <span className="text-amber-600"> · بعض الأرقام لم تُوجد في الصفحة (تحقّق من الفلتر)</span>}
+          </div>
+        ) : result ? (
           <div className="px-4 pb-3 text-xs text-gray-600">
             النتيجة ({result.mode}): طُوبق {result.matched} باقة · نُفّذ {result.applied} · من أصل {result.planned} في الخطة.
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

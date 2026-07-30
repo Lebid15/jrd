@@ -38,6 +38,7 @@ const HEADLESS = String(process.env.HEADLESS || 'true').toLowerCase() === 'true'
 const NAV_TIMEOUT = parseInt(process.env.NAV_TIMEOUT_MS || '30000', 10);
 
 const MODE = (process.env.ROUTE_MODE || 'inspect').toLowerCase();
+const ACTION = (process.env.ROUTE_ACTION || 'route').toLowerCase(); // route | deactivate
 const OPERATOR = (process.env.ROUTE_OPERATOR || '').trim();
 const TYPE = (process.env.ROUTE_TYPE || '').trim();
 let PLAN = {};
@@ -280,9 +281,81 @@ async function applyPlan(page, write) {
   return results;
 }
 
+// ─── تعطيل الباقات غير المتوفّرة (Pasif Et) ─────────────────────────────────
+// يحدّد صفّاً برقم ربطه ويضع علامة على checkbox الخاص به. status: checked |
+// already | no_checkbox | row_not_found. الكوبير = نفس منطق readRow.
+async function checkRow(page, ref, write) {
+  return page.evaluate(({ ref, write }) => {
+    const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const isApi = (sel) => {
+      const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
+      return o.includes('kapat') && o.includes('manuel');
+    };
+    const norm = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
+    let tr = null;
+    for (const row of document.querySelectorAll('table tr')) {
+      const kids = [...row.children];
+      const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
+      if (a < 2) continue;
+      if (norm(clean(kids[a - 2].textContent)) === String(ref)) { tr = row; break; }
+    }
+    if (!tr) return { status: 'row_not_found' };
+    const name = [...tr.children].map((k) => clean(k.textContent)).find((t) => t && !/^\d/.test(t)) || '';
+    const box = tr.querySelector('input[type="checkbox"]');
+    if (!box) return { status: 'no_checkbox', name };
+    if (box.checked) return { status: 'already', name };
+    if (write) {
+      box.checked = true;
+      box.dispatchEvent(new Event('click', { bubbles: true }));
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return { status: 'checked', name };
+  }, { ref, write });
+}
+
+// يبحث عن زرّ «Pasif Et» (يظهر فقط بعد التحديد) ويضغطه.
+async function clickPasifEt(page) {
+  return page.evaluate(() => {
+    const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const re = /pasif\s*et/i;
+    const cands = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
+    const el = cands.find((c) => {
+      const txt = clean(c.tagName === 'INPUT' ? c.value : c.textContent);
+      const style = window.getComputedStyle(c);
+      const visible = style.display !== 'none' && style.visibility !== 'hidden' && c.offsetParent !== null;
+      return re.test(txt) && visible;
+    });
+    if (!el) return { clicked: false };
+    el.click();
+    return { clicked: true, label: clean(el.tagName === 'INPUT' ? el.value : el.textContent) };
+  });
+}
+
+// تدفّق التعطيل: يطابق كل رقم ربط في PLAN، يضع علامة على checkbox،
+// وفي وضع apply يضغط «Pasif Et» مرّة واحدة بعد تحديد الكل.
+async function applyDeactivate(page, write) {
+  const refs = Object.keys(PLAN);
+  const results = [];
+  let checked = 0;
+  for (const ref of refs) {
+    const r = await checkRow(page, ref, write);
+    if (r.status === 'checked' || r.status === 'already') checked++;
+    results.push({ ref, name: r.name || '', status: r.status });
+  }
+  let pasif = { clicked: false };
+  if (write && checked > 0) {
+    pasif = await clickPasifEt(page);
+    if (pasif.clicked) {
+      await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
+      await page.waitForTimeout(1200);
+    }
+  }
+  return { planned: refs.length, checked, pasif, results };
+}
+
 async function main() {
   fs.mkdirSync(USER_DATA_DIR, { recursive: true });
-  console.log(`[browser] launching at ${USER_DATA_DIR} (mode=${MODE})`);
+  console.log(`[browser] launching at ${USER_DATA_DIR} (mode=${MODE}, action=${ACTION})`);
   let context, page, exitCode = 0;
   try {
     context = await chromium.launchPersistentContext(USER_DATA_DIR, {
@@ -292,6 +365,8 @@ async function main() {
     });
     page = context.pages()[0] || (await context.newPage());
     page.setDefaultTimeout(NAV_TIMEOUT);
+    // «Pasif Et» قد يطلق نافذة تأكيد (confirm) — نقبلها تلقائياً.
+    page.on('dialog', (d) => { d.accept().catch(() => {}); });
 
     await ensureLoggedIn(page);
 
@@ -303,6 +378,11 @@ async function main() {
       await applyFilter(page);
       const after = await readPage(page);
       out = { mode: 'inspect', operator: OPERATOR, type: TYPE, before, after };
+    } else if (ACTION === 'deactivate') {
+      // تعطيل الباقات غير المتوفّرة لدى أي مزوّد (Pasif Et).
+      await applyFilter(page);
+      const res = await applyDeactivate(page, MODE === 'apply');
+      out = { mode: MODE, action: 'deactivate', operator: OPERATOR, type: TYPE, ...res };
     } else {
       await applyFilter(page);
       const results = await applyPlan(page, MODE === 'apply');
