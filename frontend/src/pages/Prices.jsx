@@ -38,6 +38,8 @@ export default function Prices() {
   const isKontor = KONTOR_TABS.has(tab);
   const [defaultSrc, setDefaultSrc] = useState(null);
   const [expandedSrc, setExpandedSrc] = useState(() => new Set());
+  // أولوية كسر التعادل لكل مزوّد مُضاف: { [item_id]: رقم } — الأصغر أولاً.
+  const [priorities, setPriorities] = useState({});
 
   // المطابقة اليدوية
   const [linkModal, setLinkModal] = useState(null); // { group, source }
@@ -68,6 +70,7 @@ export default function Prices() {
   const lsBase = `jrd_prices:${tenant?.id ?? 'x'}`;
   const dkey = (tb) => `${lsBase}:default:${tb}`;
   const ekey = (tb) => `${lsBase}:expanded:${tb}`;
+  const pkey = (tb) => `${lsBase}:priority:${tb}`;
 
   // حفظ آخر تبويب مفتوح ليُستعاد عند العودة للقسم.
   useEffect(() => {
@@ -77,15 +80,28 @@ export default function Prices() {
   // عند تبديل التبويب: نعيد إظهار مصادر الألعاب، ونحمّل إعدادات الكونتور المحفوظة.
   useEffect(() => {
     setHiddenSources(new Set());
-    if (!KONTOR_TABS.has(tab)) { setDefaultSrc(null); setExpandedSrc(new Set()); return; }
+    if (!KONTOR_TABS.has(tab)) { setDefaultSrc(null); setExpandedSrc(new Set()); setPriorities({}); return; }
     try {
       const d = localStorage.getItem(`${lsBase}:default:${tab}`);
       const e = localStorage.getItem(`${lsBase}:expanded:${tab}`);
+      const p = localStorage.getItem(`${lsBase}:priority:${tab}`);
       setDefaultSrc(d ? Number(d) : null);
       setExpandedSrc(new Set(e ? JSON.parse(e) : []));
+      setPriorities(p ? JSON.parse(p) : {});
     } catch {
-      setDefaultSrc(null); setExpandedSrc(new Set());
+      setDefaultSrc(null); setExpandedSrc(new Set()); setPriorities({});
     }
+  }, [tab, lsBase]);
+
+  // تغيير أولوية مزوّد (مع الحفظ). قيمة فارغة = إزالة الأولوية.
+  const changePriority = useCallback((id, val) => {
+    setPriorities((prev) => {
+      const next = { ...prev };
+      if (val === '' || val == null) delete next[id];
+      else next[id] = String(val);
+      try { localStorage.setItem(pkey(tab), JSON.stringify(next)); } catch { /* تجاهل */ }
+      return next;
+    });
   }, [tab, lsBase]);
 
   // تغيير المزوّد الافتراضي (مع الحفظ). تغييره يصفّر الأعمدة المضافة.
@@ -375,6 +391,8 @@ export default function Prices() {
           setDefaultId={changeDefault}
           expanded={expandedSrc}
           setExpanded={changeExpanded}
+          priorities={priorities}
+          setPriority={changePriority}
           fmt={fmt}
         />
       ) : loading ? (
@@ -504,7 +522,7 @@ export default function Prices() {
 // ════════════════════════════════════════════════════════════════════════════
 // نافذة «ربط حسب الأرخص»: معاينة الخطة (آمن) → فحص على زينت (بلا تغيير) → تنفيذ.
 // ════════════════════════════════════════════════════════════════════════════
-function RouteCheapestModal({ tab, defaultId, sourceIds, categories, fmt, onClose }) {
+function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories, fmt, onClose }) {
   const [type, setType] = useState(categories[0] || '');
   const [plan, setPlan] = useState(null);       // مصفوفة الخطة من المعاينة
   const [busy, setBusy] = useState(false);
@@ -516,7 +534,7 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, categories, fmt, onClos
     if (!type) return;
     setBusy(true); setPhase('يحدّث الأسعار ثم يحسب الخطة…'); setResult(null); setInspect(null);
     try {
-      const res = await api.post('/prices/route/preview', { tab, type, default_item_id: defaultId, source_item_ids: sourceIds, refresh: true });
+      const res = await api.post('/prices/route/preview', { tab, type, default_item_id: defaultId, source_item_ids: sourceIds, source_priority: priorities || {}, refresh: true });
       setPlan(res.data?.plan || []);
     } catch (e) {
       toast.error(e.response?.data?.error || 'خطأ في المعاينة');
@@ -780,7 +798,7 @@ function LinkModal({ group, source, packages, loading, search, setSearch, onPick
 // - عمود الباقة (اسم + رقم الربط) + عمود سعر الافتراضي ← بإطار ملوّن.
 // - بقية المزوّدين يُضافون كأعمدة عند الضغط على "+".
 // ════════════════════════════════════════════════════════════════════════════
-function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId, setDefaultId, expanded, setExpanded, fmt }) {
+function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId, setDefaultId, expanded, setExpanded, priorities, setPriority, fmt }) {
   const others = useMemo(() => sources.filter((s) => s.item_id !== defaultId), [sources, defaultId]);
   const shownOthers = useMemo(() => others.filter((s) => expanded.has(s.item_id)), [others, expanded]);
   const collapsedOthers = useMemo(() => others.filter((s) => !expanded.has(s.item_id)), [others, expanded]);
@@ -883,6 +901,7 @@ function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId,
           tab={tab}
           defaultId={defaultId}
           sourceIds={shownOthers.map((s) => s.item_id)}
+          priorities={priorities}
           categories={categories}
           fmt={fmt}
           onClose={() => setRouteOpen(false)}
@@ -916,6 +935,14 @@ function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId,
                         <X size={13} />
                       </button>
                     </div>
+                    <input
+                      type="number"
+                      value={priorities?.[s.item_id] ?? ''}
+                      onChange={(e) => setPriority(s.item_id, e.target.value)}
+                      placeholder="#"
+                      title="أولوية عند تساوي السعر (الأصغر أولاً)"
+                      className="mt-1 w-12 text-center bg-white text-gray-800 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-300"
+                    />
                   </th>
                 ))}
               </tr>

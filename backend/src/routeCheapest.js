@@ -21,11 +21,18 @@ export function normalizeRef(ref) {
   return m ? m[0] : s;
 }
 
-export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId = null, topN = 3, includeItemIds = null } = {}) {
+export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId = null, topN = 3, includeItemIds = null, priorityMap = null } = {}) {
   // مجموعة المصادر المسموح ترشيحها (الأعمدة المُضافة للمقارنة). null = الكل.
   const includeSet = Array.isArray(includeItemIds) && includeItemIds.length
     ? new Set(includeItemIds.map(Number))
     : null;
+
+  // أولوية كسر التعادل اليدوية { item_id: رقم } — الأصغر أولاً؛ بلا رقم = الأدنى.
+  const prio = (itemId) => {
+    const v = priorityMap ? priorityMap[itemId] ?? priorityMap[String(itemId)] : null;
+    const n = Number(v);
+    return (v == null || v === '' || Number.isNaN(n)) ? Infinity : n;
+  };
   if (!KONTOR_OPERATORS[tab]) {
     throw new Error('bad_tab: التوجيه متاح لتبويبات الكونتور فقط');
   }
@@ -89,7 +96,9 @@ export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId 
         && c.available && c.price != null && c.price > 0)
       .sort((a, b) => {
         if (a.price !== b.price) return a.price - b.price;
-        // تعادل: الأقدم إضافةً أولاً
+        // تعادل: الأولوية اليدوية أولاً (الأصغر)، ثم الأقدم إضافةً.
+        const pa = prio(a.source_item_id), pb = prio(b.source_item_id);
+        if (pa !== pb) return pa - pb;
         return (orderOf.get(a.source_item_id) ?? 1e9) - (orderOf.get(b.source_item_id) ?? 1e9);
       });
 
