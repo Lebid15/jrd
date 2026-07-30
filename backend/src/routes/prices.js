@@ -305,10 +305,11 @@ router.post('/route/preview', async (req, res) => {
 // inspect: يُرجع بنية الصفحة (لضبط المُحدِّدات). dryrun: يطابق بلا كتابة. apply: يكتب.
 router.post('/route/run', async (req, res) => {
   const t = tid(req);
-  const { tab = 'turkcell', type, mode = 'dryrun', plan } = req.body || {};
+  const { tab = 'turkcell', type, mode = 'dryrun', plan, action = 'route' } = req.body || {};
   const isGames = tab === 'games';
   if (!KONTOR_OPERATORS[tab] && !isGames) return res.status(400).json({ error: 'bad_tab' });
   if (!['inspect', 'dryrun', 'apply'].includes(mode)) return res.status(400).json({ error: 'bad_mode' });
+  if (action === 'deactivate' && isGames) return res.status(400).json({ error: 'deactivate_kontor_only: التعطيل متاح لتبويبات الكونتور فقط.' });
 
   const cfg = getBayiConfig(t);
   if (!cfg) {
@@ -328,7 +329,7 @@ router.post('/route/run', async (req, res) => {
     const result = isGames
       ? await runGamesRouter(cfg, { mode, plan: planMap, itemId: cfg.item_id, tenantId: t })
       : await runTariffRouter(cfg, {
-        mode, operator: KONTOR_OPERATORS[tab], type: type || '',
+        mode, action, operator: KONTOR_OPERATORS[tab], type: type || '',
         plan: planMap, itemId: cfg.item_id, tenantId: t,
       });
     res.json(result);
