@@ -9,6 +9,7 @@ const SCRAPER_DIR = process.env.SCRAPER_DIR
   : path.join(__dirname, '..', '..', 'scraper');
 const SCRAPER_ENTRY = path.join(SCRAPER_DIR, 'src', 'fetch.js');
 const ROUTE_ENTRY = path.join(SCRAPER_DIR, 'src', 'route-tariffs.js');
+const GAMES_ROUTE_ENTRY = path.join(SCRAPER_DIR, 'src', 'route-games.js');
 const BROWSER_DATA_ROOT = process.env.DATA_DIR
   ? path.join(path.resolve(process.env.DATA_DIR), 'browser-data')
   : path.join(SCRAPER_DIR, 'browser-data');
@@ -109,6 +110,28 @@ export function runTariffRouter(config, { mode = 'dryrun', operator, type, plan 
     ROUTE_MODE: mode,
     ROUTE_OPERATOR: operator || '',
     ROUTE_TYPE: type || '',
+    ROUTE_PLAN: JSON.stringify(plan || {}),
+  }, { timeoutMs });
+}
+
+/**
+ * روبوت توجيه الألعاب على لوحة زينت (OyunPin/admin_allPinList.php) — خانتان (Api1/Api2).
+ * يطابق كل صفّ برقم منتج الافتراضي. plan: { '<رقم المنتج>': ['اسم1','اسم2'] }.
+ */
+export function runGamesRouter(config, { mode = 'dryrun', plan = {}, itemId, tenantId = 1 } = {}) {
+  const phone = (config?.kod || '').trim();
+  const password = (config?.sifre || '').trim();
+  const loginUrl = (config?.base_url || '').trim() || 'http://bayi.alayatl.com/index.php?giris=true';
+  const pin = (config?.pin || '').trim();
+  if (!phone || !password) return Promise.reject(new Error('Missing phone (kod) or password (sifre)'));
+  const timeoutMs = mode === 'apply' ? 600000 : 240000;
+  return runScraper(GAMES_ROUTE_ENTRY, {
+    BAYI_PHONE: phone,
+    BAYI_PASSWORD: password,
+    BAYI_LOGIN_URL: loginUrl,
+    ...(pin ? { BAYI_PIN: pin } : {}),
+    BROWSER_DATA_DIR: browserDirFor(tenantId, itemId),
+    ROUTE_MODE: mode,
     ROUTE_PLAN: JSON.stringify(plan || {}),
   }, { timeoutMs });
 }

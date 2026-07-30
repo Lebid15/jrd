@@ -3,7 +3,7 @@ import db from '../database.js';
 import { tid } from '../tenantHelpers.js';
 import { fetchPackages, supportsPriceList, cleanText, makeMatchKey, KONTOR_OPERATORS } from '../priceProviders.js';
 import { computeRoutingPlan } from '../routeCheapest.js';
-import { runTariffRouter } from '../scrapers.js';
+import { runTariffRouter, runGamesRouter } from '../scrapers.js';
 
 const router = Router();
 
@@ -162,11 +162,20 @@ router.get('/compare', (req, res) => {
   //   حيث تتطابق الأرقام؛ وما يختلف يُربط يدوياً.
   // - الألعاب: المطابقة بالاسم (external_ref غير ثابت بين المواقع في pin_listesi).
   const isKontor = !!KONTOR_OPERATORS[tab];
+  const isGames = tab === 'games';
   const refKey = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
   const keyOf = (r) => {
     if (isKontor) {
       const ref = refKey(r.external_ref);
       if (ref) return `k${ref}`;
+      return makeMatchKey({ name: r.name });
+    }
+    if (isGames) {
+      // الألعاب: مطابقة (لعبة + فئة) — مستقلّة عن اسم الباقة. بلا فئة (zdk) → بالاسم
+      // (تُربط يدوياً بصفوف znet).
+      const denom = String(r.denomination ?? '').trim();
+      const game = cleanText(r.category);
+      if (denom && game) return `g${makeMatchKey({ name: `${game} ${denom}` })}`;
     }
     return makeMatchKey({ name: r.name }) || r.match_key || String(r.name || '').toLowerCase();
   };
@@ -272,8 +281,9 @@ router.get('/compare', (req, res) => {
 router.post('/route/preview', async (req, res) => {
   const t = tid(req);
   const { tab = 'turkcell', type, default_item_id, source_item_ids, source_priority, refresh = true } = req.body || {};
-  if (!KONTOR_OPERATORS[tab]) return res.status(400).json({ error: 'bad_tab' });
-  if (!type) return res.status(400).json({ error: 'type_required' });
+  const isGames = tab === 'games';
+  if (!KONTOR_OPERATORS[tab] && !isGames) return res.status(400).json({ error: 'bad_tab' });
+  if (!type && !isGames) return res.status(400).json({ error: 'type_required' }); // الألعاب: النوع (اللعبة) اختياري
 
   let refreshResults = null;
   if (refresh) {
@@ -283,13 +293,12 @@ router.post('/route/preview', async (req, res) => {
 
   const plan = computeRoutingPlan(db, t, tab, type, {
     defaultItemId: default_item_id ? Number(default_item_id) : null,
-    // المصادر المُضافة لجدول المقارنة فقط (نتجاهل أي مزوّد خارج الجدول).
     includeItemIds: Array.isArray(source_item_ids) ? source_item_ids : null,
-    // أولوية كسر التعادل يدوياً { item_id: رقم } — الأصغر أولاً.
     priorityMap: source_priority && typeof source_priority === 'object' ? source_priority : null,
-    topN: 3,
+    topN: isGames ? 2 : 3,
+    mode: isGames ? 'games' : 'kontor',
   });
-  res.json({ tab, type, operator: KONTOR_OPERATORS[tab], count: plan.length, plan, refresh: refreshResults });
+  res.json({ tab, type, operator: isGames ? 'Games' : KONTOR_OPERATORS[tab], count: plan.length, plan, refresh: refreshResults });
 });
 
 // تشغيل الروبوت على زينت: mode = inspect | dryrun | apply.
@@ -297,7 +306,8 @@ router.post('/route/preview', async (req, res) => {
 router.post('/route/run', async (req, res) => {
   const t = tid(req);
   const { tab = 'turkcell', type, mode = 'dryrun', plan } = req.body || {};
-  if (!KONTOR_OPERATORS[tab]) return res.status(400).json({ error: 'bad_tab' });
+  const isGames = tab === 'games';
+  if (!KONTOR_OPERATORS[tab] && !isGames) return res.status(400).json({ error: 'bad_tab' });
   if (!['inspect', 'dryrun', 'apply'].includes(mode)) return res.status(400).json({ error: 'bad_mode' });
 
   const cfg = getBayiConfig(t);
@@ -315,14 +325,12 @@ router.post('/route/run', async (req, res) => {
   }
 
   try {
-    const result = await runTariffRouter(cfg, {
-      mode,
-      operator: KONTOR_OPERATORS[tab],
-      type: type || '',
-      plan: planMap,
-      itemId: cfg.item_id,
-      tenantId: t,
-    });
+    const result = isGames
+      ? await runGamesRouter(cfg, { mode, plan: planMap, itemId: cfg.item_id, tenantId: t })
+      : await runTariffRouter(cfg, {
+        mode, operator: KONTOR_OPERATORS[tab], type: type || '',
+        plan: planMap, itemId: cfg.item_id, tenantId: t,
+      });
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: 'robot_failed: ' + e.message });

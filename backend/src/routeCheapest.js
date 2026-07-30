@@ -21,7 +21,8 @@ export function normalizeRef(ref) {
   return m ? m[0] : s;
 }
 
-export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId = null, topN = 3, includeItemIds = null, priorityMap = null } = {}) {
+export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId = null, topN = 3, includeItemIds = null, priorityMap = null, mode = 'kontor' } = {}) {
+  const isGames = mode === 'games';
   // مجموعة المصادر المسموح ترشيحها (الأعمدة المُضافة للمقارنة). null = الكل.
   const includeSet = Array.isArray(includeItemIds) && includeItemIds.length
     ? new Set(includeItemIds.map(Number))
@@ -33,10 +34,18 @@ export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId 
     const n = Number(v);
     return (v == null || v === '' || Number.isNaN(n)) ? Infinity : n;
   };
-  if (!KONTOR_OPERATORS[tab]) {
-    throw new Error('bad_tab: التوجيه متاح لتبويبات الكونتور فقط');
+  if (!KONTOR_OPERATORS[tab] && !isGames) {
+    throw new Error('bad_tab: التوجيه متاح لتبويبات الكونتور والألعاب فقط');
   }
   const wantCat = norm(category).toLowerCase();
+
+  // مفتاح المطابقة: الكونتور برقم الربط (küpür)، والألعاب بـ (لعبة + فئة).
+  const groupKey = (r) => {
+    if (!isGames) { const ref = normalizeRef(r.external_ref); return ref ? `k${ref}` : makeMatchKey({ name: r.name }); }
+    const denom = String(r.denomination ?? '').trim();
+    const game = norm(r.category);
+    return (denom && game) ? `g${makeMatchKey({ name: `${game} ${denom}` })}` : makeMatchKey({ name: r.name });
+  };
 
   // ترتيب المصادر (المزوّدين) كما أُضيفت للجدول: sort_order ثم id.
   const items = db.prepare(`
@@ -55,30 +64,25 @@ export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId 
     WHERE tenant_id = ? AND tab = ?
   `).all(tenantId, tab);
 
-  // تجميع برقم الربط فقط (نفس مفتاح /compare: `k<ref>`) — كل المزوّدين معاً.
-  // فئة الصفّ = فئة znet (المرجع)، فنفلتر النوع بعد التجميع لا لكل صفّ.
-  const keyOf = (r) => {
-    const ref = normalizeRef(r.external_ref);
-    return ref ? `k${ref}` : makeMatchKey({ name: r.name });
-  };
-
+  // تجميع كل المزوّدين معاً بمفتاح المطابقة. فئة/اسم الصفّ من znet (المرجع).
+  // رقم الربط الذي تُطابَق به صفحة زينت:
+  //   - الكونتور: küpür (ثابت عبر المواقع) من أي znet.
+  //   - الألعاب: رقم منتج **المزوّد الافتراضي** (= صفّ admin_allPinList).
   const groups = new Map();
   for (const r of rows) {
-    const k = keyOf(r);
+    const k = groupKey(r);
     if (!groups.has(k)) {
-      groups.set(k, {
-        link_ref: normalizeRef(r.external_ref),
-        display_name: norm(r.name),
-        category: norm(r.category),
-        candidates: new Map(),
-      });
+      groups.set(k, { link_ref: '', display_name: norm(r.name), category: norm(r.category), candidates: new Map() });
     }
     const g = groups.get(k);
     if (r.provider_type === 'znet') {
-      // znet هو مرجع الفئة/الاسم/رقم الربط.
-      g.link_ref = normalizeRef(r.external_ref) || g.link_ref;
       g.display_name = norm(r.name);
       g.category = norm(r.category);
+    }
+    if (isGames) {
+      if (r.source_item_id === defaultItemId) g.link_ref = normalizeRef(r.external_ref);
+    } else if (r.provider_type === 'znet') {
+      g.link_ref = normalizeRef(r.external_ref) || g.link_ref;
     } else if (!g.link_ref) {
       g.link_ref = normalizeRef(r.external_ref);
     }
