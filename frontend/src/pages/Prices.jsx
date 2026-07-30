@@ -591,8 +591,9 @@ function RouteCheapestModal({ tab, defaultId, categories, fmt, onClose }) {
                         <div className="font-medium text-gray-800 truncate max-w-[220px]" title={row.display_name}>{row.display_name}</div>
                         <div className="text-xs text-gray-400">
                           رقم الربط: {row.link_ref}
-                          {res && (res.set?.length ? <span className="text-emerald-600"> · ✓ نُفّذ</span>
-                            : res.missing?.length ? <span className="text-red-500"> · أسماء غير موجودة: {res.missing.join('، ')}</span> : null)}
+                          {res && (res.set?.length ? <span className="text-emerald-600"> · ✓ نُفّذ ({res.set.length})</span>
+                            : res.missing?.length ? <span className="text-red-500"> · أسماء غير موجودة: {res.missing.join('، ')}</span>
+                            : res.note ? <span className="text-amber-600"> · {res.note}</span> : null)}
                         </div>
                       </td>
                       {row.slots.map((s, i) => (
