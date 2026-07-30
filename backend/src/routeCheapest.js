@@ -79,11 +79,9 @@ export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId 
       g.display_name = norm(r.name);
       g.category = norm(r.category);
     }
-    if (isGames) {
-      if (r.source_item_id === defaultItemId) g.link_ref = normalizeRef(r.external_ref);
-    } else if (r.provider_type === 'znet') {
-      g.link_ref = normalizeRef(r.external_ref) || g.link_ref;
-    } else if (!g.link_ref) {
+    // رقم الربط = رقم باقة/منتج **المزوّد الافتراضي** (= صفّ لوحة زينت التي نوجّه عليها).
+    // مجموعة لا يملكها الافتراضي تبقى بلا رقم ربط → تُتجاهَل (لا صفّ لها على لوحته).
+    if (defaultItemId != null && r.source_item_id === defaultItemId) {
       g.link_ref = normalizeRef(r.external_ref);
     }
     const cur = g.candidates.get(r.source_item_id);
