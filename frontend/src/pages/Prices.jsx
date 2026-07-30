@@ -34,8 +34,9 @@ export default function Prices() {
   const [hiddenSources, setHiddenSources] = useState(() => new Set()); // مصادر مُزالة من المقارنة
   const scrollRef = useRef(null);
 
-  // تبويبات الكونتور: المزوّد الافتراضي + الأعمدة الإضافية المفتوحة
+  // تبويبات الكونتور + الألعاب: المزوّد الافتراضي + الأعمدة الإضافية المفتوحة
   const isKontor = KONTOR_TABS.has(tab);
+  const isGames = tab === 'games';
   const [defaultSrc, setDefaultSrc] = useState(null);
   const [expandedSrc, setExpandedSrc] = useState(() => new Set());
   // أولوية كسر التعادل لكل مزوّد مُضاف: { [item_id]: رقم } — الأصغر أولاً.
@@ -85,7 +86,7 @@ export default function Prices() {
       const p = localStorage.getItem(`${lsBase}:priority:${tab}`);
       setPriorities(p ? JSON.parse(p) : {});
     } catch { setPriorities({}); }
-    if (!KONTOR_TABS.has(tab)) { setDefaultSrc(null); setExpandedSrc(new Set()); return; }
+    if (!KONTOR_TABS.has(tab) && tab !== 'games') { setDefaultSrc(null); setExpandedSrc(new Set()); return; }
     try {
       const d = localStorage.getItem(`${lsBase}:default:${tab}`);
       const e = localStorage.getItem(`${lsBase}:expanded:${tab}`);
@@ -129,6 +130,11 @@ export default function Prices() {
   const KONTOR_PROVIDER_TYPES = ['znet', 'murat_temiz'];
   const kontorSources = useMemo(
     () => compareSources.filter((s) => KONTOR_PROVIDER_TYPES.includes(s.provider_type)),
+    [compareSources],
+  );
+  // مصادر الألعاب = znet + barakat/zdk.
+  const gamesSources = useMemo(
+    () => compareSources.filter((s) => ['znet', 'barakat'].includes(s.provider_type)),
     [compareSources],
   );
   // بطاقات "مصادر الأسعار": في تبويبات الكونتور نعرض znet + murat.
@@ -401,10 +407,10 @@ export default function Prices() {
       )}
 
       {/* Comparison table */}
-      {isKontor ? (
+      {(isKontor || isGames) ? (
         <KontorCompare
           tab={tab}
-          sources={kontorSources}
+          sources={isGames ? gamesSources : kontorSources}
           groups={groups}
           q={q}
           catFilter={catFilter}
@@ -628,9 +634,9 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
               <thead className="sticky top-0 bg-gray-100">
                 <tr className="text-gray-600">
                   <th className="py-2 px-3 text-right">الباقة (رقم الربط)</th>
-                  <th className="py-2 px-3 text-center">API1 (الأرخص)</th>
-                  <th className="py-2 px-3 text-center">API2</th>
-                  <th className="py-2 px-3 text-center">API3</th>
+                  {Array.from({ length: plan[0]?.slots?.length || 3 }).map((_, i) => (
+                    <th key={i} className="py-2 px-3 text-center">API{i + 1}{i === 0 ? ' (الأرخص)' : ''}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
