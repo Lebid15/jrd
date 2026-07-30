@@ -155,25 +155,73 @@ export async function fetchZnetKontorPackages(config, operator) {
   return out;
 }
 
+// murat_temiz (efixtl): /services/paket_listesi.php → سجلّات مفصولة بمسافة،
+// وكل سجلّ حقول مفصولة بـ `;`:
+//   المشغّل ; الاسم ; النوع ; الكوبير ; السعر ; سعر البيع ; دقائق ; جيجا ; sms ; . ; ملاحظة ; .
+// المشغّل بادئته تحدّد التبويب: Avea*/Turkcell*/Vodafone* → avea/turkcell/vodafone.
+export function parseMuratKontor(text, operator) {
+  if (!text || !text.trim()) throw new Error('Murat: رد فارغ (تحقّق من الكود/كلمة السر)');
+  if (text.trimStart().startsWith('<')) {
+    throw new Error(`Murat paket_listesi رد HTML بدل البيانات: ${text.slice(0, 120)}`);
+  }
+  const wantOp = String(operator || '').toLowerCase();
+  const out = [];
+  // فاصل السجلّات = `;` متبوعة بمسافة/سطر (لا يقع داخل السجلّ لأن الحقول بلا مسافات بعد `;`).
+  for (const rec of text.trim().split(/;\s+/)) {
+    const f = rec.split(';');
+    if (f.length < 6) continue;
+    const grp = cleanText(f[0]);
+    if (!grp) continue;
+    if (wantOp && !grp.toLowerCase().startsWith(wantOp)) continue;
+    const name = cleanText(f[1]);
+    const kupur = String(f[3] || '').trim();
+    const price = parseFloat(f[4]) || 0;   // سعر البائع (التكلفة) — للمقارنة
+    if (!name || !kupur) continue;
+    out.push({
+      external_ref: kupur,
+      name,
+      category: grp,                 // للعرض فقط (تُستبدل بفئة znet عند الدمج برقم الربط)
+      denomination: kupur,
+      price,
+      currency: 'TRY',
+      is_available: 1,
+      match_key: makeMatchKey({ name: kupur }),
+    });
+  }
+  return out;
+}
+
+export async function fetchMuratTemizKontorPackages(config, operator) {
+  const { base_url, kod, sifre } = config;
+  const cleanUrl = (base_url || '').replace(/\/+$/, '');
+  if (!cleanUrl || !kod || !sifre) throw new Error('Murat: base_url/kod/sifre مفقودة');
+  const url = `${cleanUrl}/services/paket_listesi.php?bayi_kodu=${encodeURIComponent(kod)}&sifre=${encodeURIComponent(sifre)}&islem=bakiyeoku`;
+  const res = await fetch(url, { timeout: 20000 });
+  const text = await res.text();
+  return parseMuratKontor(text, operator);
+}
+
 const PRICE_PROVIDERS = {
   znet: fetchZnetPackages,
   barakat: fetchZdkPackages,
 };
 
-// تبويبات الكونتور → اسم المشغّل في رد znet. الكونتور من znet فقط (لا zdk).
+// تبويبات الكونتور → اسم المشغّل. الكونتور من znet و murat_temiz.
 export const KONTOR_OPERATORS = { turkcell: 'Turkcell', vodafone: 'Vodafone', avea: 'Avea' };
+const KONTOR_PROVIDERS = new Set(['znet', 'murat_temiz']);
 
 // هل يدعم هذا النوع جلب قائمة أسعار لهذا التبويب؟
 export function supportsPriceList(providerType, tab = 'games') {
-  if (KONTOR_OPERATORS[tab]) return providerType === 'znet'; // كونتور: znet حصراً
+  if (KONTOR_OPERATORS[tab]) return KONTOR_PROVIDERS.has(providerType); // كونتور: znet + murat
   return Object.prototype.hasOwnProperty.call(PRICE_PROVIDERS, providerType);
 }
 
 export async function fetchPackages(providerType, config, tab = 'games') {
   const operator = KONTOR_OPERATORS[tab];
   if (operator) {
-    if (providerType !== 'znet') return [];
-    return fetchZnetKontorPackages(config, operator);
+    if (providerType === 'znet') return fetchZnetKontorPackages(config, operator);
+    if (providerType === 'murat_temiz') return fetchMuratTemizKontorPackages(config, operator);
+    return [];
   }
   const fn = PRICE_PROVIDERS[providerType];
   if (!fn) throw new Error(`المزوّد لا يدعم قائمة الأسعار: ${providerType}`);

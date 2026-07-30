@@ -157,14 +157,16 @@ router.get('/compare', (req, res) => {
   for (const r of rows) pkgByRef.set(`${r.source_item_id}|${r.external_ref}`, r);
 
   // إعادة حساب مفتاح المطابقة (يعمل فوراً على البيانات المخزّنة دون حاجة لتحديث).
-  // - الكونتور (تركسيل/فودافون/افيا): المطابقة بـ (النوع + رقم الربط) لأنها ثابتة
-  //   عبر مواقع znet، بينما الاسم يخصّصه كل بائع فيختلف فتتبعثر الباقة على صفوف.
+  // - الكونتور (تركسيل/فودافون/افيا): المطابقة بـ **رقم الربط (küpür)** وحده — فريد
+  //   داخل المشغّل وثابت عبر المزوّدين (znet + murat)، فيندمج مراد مع znet تلقائياً
+  //   حيث تتطابق الأرقام؛ وما يختلف يُربط يدوياً.
   // - الألعاب: المطابقة بالاسم (external_ref غير ثابت بين المواقع في pin_listesi).
   const isKontor = !!KONTOR_OPERATORS[tab];
+  const refKey = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
   const keyOf = (r) => {
     if (isKontor) {
-      const ref = String(r.external_ref ?? '').trim();
-      if (ref) return makeMatchKey({ name: `${r.category || ''} ${ref}` });
+      const ref = refKey(r.external_ref);
+      if (ref) return `k${ref}`;
     }
     return makeMatchKey({ name: r.name }) || r.match_key || String(r.name || '').toLowerCase();
   };
@@ -198,11 +200,15 @@ router.get('/compare', (req, res) => {
       });
     }
     const grp = groupsMap.get(key);
-    // الصفّ يُرتكز على باقات znet (تتطابق تلقائياً). zdk تُضاف بالربط فقط.
+    // الصفّ يُرتكز على باقات znet (تتطابق تلقائياً). مراد/zdk تُضاف بالربط أو برقم الربط.
     if (r.provider_type === 'znet') {
       grp.hasZnet = true;
-      // رقم الربط (external_ref) من باقة znet — يُعرض بجانب اسم المنتج.
-      if (grp.external_ref == null) grp.external_ref = r.external_ref;
+      // نفضّل بيانات znet للعرض (الاسم/النوع/رقم الربط) لأنها الأساس.
+      grp.external_ref = refKey(r.external_ref) || grp.external_ref;
+      grp.display_name = cleanText(r.name);
+      grp.category = cleanText(r.category);
+    } else if (grp.external_ref == null) {
+      grp.external_ref = refKey(r.external_ref);
     }
     const cur = grp.prices[r.source_item_id];
     // نحتفظ بأقل سعر لكل مصدر (في حال وجود تكرار)

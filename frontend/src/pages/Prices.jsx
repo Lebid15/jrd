@@ -122,14 +122,15 @@ export default function Prices() {
     });
   }, [tab, lsBase]);
 
-  // مصادر الكونتور = مزوّدو znet فقط (بركات/مراد تميز لا يبيعون كونتور).
+  // مصادر الكونتور = مزوّدو znet + murat_temiz (كلاهما يبيع كونتور).
+  const KONTOR_PROVIDER_TYPES = ['znet', 'murat_temiz'];
   const kontorSources = useMemo(
-    () => compareSources.filter((s) => s.provider_type === 'znet'),
+    () => compareSources.filter((s) => KONTOR_PROVIDER_TYPES.includes(s.provider_type)),
     [compareSources],
   );
-  // بطاقات "مصادر الأسعار": في تبويبات الكونتور نعرض مزوّدي znet فقط.
+  // بطاقات "مصادر الأسعار": في تبويبات الكونتور نعرض znet + murat.
   const summarySources = useMemo(
-    () => (isKontor ? sources.filter((s) => s.provider_type === 'znet') : sources),
+    () => (isKontor ? sources.filter((s) => KONTOR_PROVIDER_TYPES.includes(s.provider_type)) : sources),
     [sources, isKontor],
   );
 
@@ -393,6 +394,8 @@ export default function Prices() {
           setExpanded={changeExpanded}
           priorities={priorities}
           setPriority={changePriority}
+          openLink={openLink}
+          doUnlink={doUnlink}
           fmt={fmt}
         />
       ) : loading ? (
@@ -798,7 +801,7 @@ function LinkModal({ group, source, packages, loading, search, setSearch, onPick
 // - عمود الباقة (اسم + رقم الربط) + عمود سعر الافتراضي ← بإطار ملوّن.
 // - بقية المزوّدين يُضافون كأعمدة عند الضغط على "+".
 // ════════════════════════════════════════════════════════════════════════════
-function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId, setDefaultId, expanded, setExpanded, priorities, setPriority, fmt }) {
+function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId, setDefaultId, expanded, setExpanded, priorities, setPriority, openLink, doUnlink, fmt }) {
   const others = useMemo(() => sources.filter((s) => s.item_id !== defaultId), [sources, defaultId]);
   const shownOthers = useMemo(() => others.filter((s) => expanded.has(s.item_id)), [others, expanded]);
   const collapsedOthers = useMemo(() => others.filter((s) => !expanded.has(s.item_id)), [others, expanded]);
@@ -966,9 +969,29 @@ function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId,
                     {shownOthers.map((s) => {
                       const cell = g.prices[s.item_id];
                       const isCheapest = cell && cheapest != null && cell.available && cell.price === cheapest;
+                      if (!cell || !cell.available || !(cell.price > 0)) {
+                        return (
+                          <td key={s.item_id} className="py-2 px-3 text-center">
+                            <button
+                              onClick={() => openLink(g, s)}
+                              className="inline-flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 rounded px-1.5 py-1 border border-indigo-200"
+                              title="ربط باقة من هذا المصدر يدوياً (اختلاف رقم الربط)"
+                            >
+                              <Link2 size={13} /> ربط
+                            </button>
+                          </td>
+                        );
+                      }
                       return (
-                        <td key={s.item_id} className={`py-2 px-3 text-center ${isCheapest ? 'bg-emerald-100 text-emerald-800 font-bold rounded' : 'text-gray-700'}`}>
-                          {cell && cell.available && cell.price > 0 ? fmt(cell.price) : '—'}
+                        <td key={s.item_id} className={`py-2 px-3 text-center ${isCheapest ? 'bg-emerald-100 text-emerald-800 font-bold rounded' : 'text-gray-700'} ${cell.manual ? 'ring-1 ring-inset ring-indigo-200' : ''}`}>
+                          <div className="flex items-center justify-center gap-1">
+                            <span title={cell.name}>{fmt(cell.price)}</span>
+                            {cell.manual && (
+                              <button onClick={() => doUnlink(g, s)} className="text-indigo-400 hover:text-red-500" title="إلغاء الربط اليدوي">
+                                <X size={12} />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       );
                     })}
