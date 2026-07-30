@@ -265,7 +265,7 @@ router.get('/compare', (req, res) => {
 // ترتيب المزوّدين الأرخص (أوّل 3)، مستثنياً الافتراضي.
 router.post('/route/preview', async (req, res) => {
   const t = tid(req);
-  const { tab = 'turkcell', type, default_item_id, refresh = true } = req.body || {};
+  const { tab = 'turkcell', type, default_item_id, source_item_ids, refresh = true } = req.body || {};
   if (!KONTOR_OPERATORS[tab]) return res.status(400).json({ error: 'bad_tab' });
   if (!type) return res.status(400).json({ error: 'type_required' });
 
@@ -277,6 +277,8 @@ router.post('/route/preview', async (req, res) => {
 
   const plan = computeRoutingPlan(db, t, tab, type, {
     defaultItemId: default_item_id ? Number(default_item_id) : null,
+    // المصادر المُضافة لجدول المقارنة فقط (نتجاهل أي مزوّد خارج الجدول).
+    includeItemIds: Array.isArray(source_item_ids) ? source_item_ids : null,
     topN: 3,
   });
   res.json({ tab, type, operator: KONTOR_OPERATORS[tab], count: plan.length, plan, refresh: refreshResults });
