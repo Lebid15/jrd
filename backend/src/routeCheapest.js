@@ -21,7 +21,11 @@ export function normalizeRef(ref) {
   return m ? m[0] : s;
 }
 
-export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId = null, topN = 3 } = {}) {
+export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId = null, topN = 3, includeItemIds = null } = {}) {
+  // مجموعة المصادر المسموح ترشيحها (الأعمدة المُضافة للمقارنة). null = الكل.
+  const includeSet = Array.isArray(includeItemIds) && includeItemIds.length
+    ? new Set(includeItemIds.map(Number))
+    : null;
   if (!KONTOR_OPERATORS[tab]) {
     throw new Error('bad_tab: التوجيه متاح لتبويبات الكونتور فقط');
   }
@@ -80,7 +84,9 @@ export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId 
   for (const g of groups.values()) {
     if (!g.link_ref) continue;   // لا يمكن مطابقتها في زينت بلا رقم ربط
     const ranked = [...g.candidates.values()]
-      .filter((c) => c.source_item_id !== defaultItemId && c.available && c.price != null && c.price > 0)
+      .filter((c) => c.source_item_id !== defaultItemId
+        && (!includeSet || includeSet.has(c.source_item_id))   // الأعمدة المُضافة فقط
+        && c.available && c.price != null && c.price > 0)
       .sort((a, b) => {
         if (a.price !== b.price) return a.price - b.price;
         // تعادل: الأقدم إضافةً أولاً

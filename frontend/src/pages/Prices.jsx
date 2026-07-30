@@ -504,7 +504,7 @@ export default function Prices() {
 // ════════════════════════════════════════════════════════════════════════════
 // نافذة «ربط حسب الأرخص»: معاينة الخطة (آمن) → فحص على زينت (بلا تغيير) → تنفيذ.
 // ════════════════════════════════════════════════════════════════════════════
-function RouteCheapestModal({ tab, defaultId, categories, fmt, onClose }) {
+function RouteCheapestModal({ tab, defaultId, sourceIds, categories, fmt, onClose }) {
   const [type, setType] = useState(categories[0] || '');
   const [plan, setPlan] = useState(null);       // مصفوفة الخطة من المعاينة
   const [busy, setBusy] = useState(false);
@@ -516,7 +516,7 @@ function RouteCheapestModal({ tab, defaultId, categories, fmt, onClose }) {
     if (!type) return;
     setBusy(true); setPhase('يحدّث الأسعار ثم يحسب الخطة…'); setResult(null); setInspect(null);
     try {
-      const res = await api.post('/prices/route/preview', { tab, type, default_item_id: defaultId, refresh: true });
+      const res = await api.post('/prices/route/preview', { tab, type, default_item_id: defaultId, source_item_ids: sourceIds, refresh: true });
       setPlan(res.data?.plan || []);
     } catch (e) {
       toast.error(e.response?.data?.error || 'خطأ في المعاينة');
@@ -882,6 +882,7 @@ function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId,
         <RouteCheapestModal
           tab={tab}
           defaultId={defaultId}
+          sourceIds={shownOthers.map((s) => s.item_id)}
           categories={categories}
           fmt={fmt}
           onClose={() => setRouteOpen(false)}
