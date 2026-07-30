@@ -80,16 +80,19 @@ export default function Prices() {
   // عند تبديل التبويب: نعيد إظهار مصادر الألعاب، ونحمّل إعدادات الكونتور المحفوظة.
   useEffect(() => {
     setHiddenSources(new Set());
-    if (!KONTOR_TABS.has(tab)) { setDefaultSrc(null); setExpandedSrc(new Set()); setPriorities({}); return; }
+    // الأولوية تُحمّل لكل التبويبات (ألعاب + كونتور).
+    try {
+      const p = localStorage.getItem(`${lsBase}:priority:${tab}`);
+      setPriorities(p ? JSON.parse(p) : {});
+    } catch { setPriorities({}); }
+    if (!KONTOR_TABS.has(tab)) { setDefaultSrc(null); setExpandedSrc(new Set()); return; }
     try {
       const d = localStorage.getItem(`${lsBase}:default:${tab}`);
       const e = localStorage.getItem(`${lsBase}:expanded:${tab}`);
-      const p = localStorage.getItem(`${lsBase}:priority:${tab}`);
       setDefaultSrc(d ? Number(d) : null);
       setExpandedSrc(new Set(e ? JSON.parse(e) : []));
-      setPriorities(p ? JSON.parse(p) : {});
     } catch {
-      setDefaultSrc(null); setExpandedSrc(new Set()); setPriorities({});
+      setDefaultSrc(null); setExpandedSrc(new Set());
     }
   }, [tab, lsBase]);
 
@@ -186,6 +189,24 @@ export default function Prices() {
     () => compareSources.filter((s) => hiddenSources.has(s.item_id)),
     [compareSources, hiddenSources],
   );
+  // المصدر الفائز بالأرخص: السعر الأقل، فالأولوية اليدوية (الأصغر)، فترتيب الإضافة.
+  const prioOf = useCallback((id) => {
+    const v = priorities?.[id];
+    const n = Number(v);
+    return (v == null || v === '' || Number.isNaN(n)) ? Infinity : n;
+  }, [priorities]);
+  const cheapestWinnerId = useCallback((g) => {
+    let best = null;
+    visibleSources.forEach((s, idx) => {
+      const c = g.prices[s.item_id];
+      if (!c || !c.available || !(c.price > 0)) return;
+      const cand = { id: s.item_id, price: c.price, prio: prioOf(s.item_id), order: idx };
+      if (!best || cand.price < best.price
+        || (cand.price === best.price && (cand.prio < best.prio
+          || (cand.prio === best.prio && cand.order < best.order)))) best = cand;
+    });
+    return best ? best.id : null;
+  }, [visibleSources, prioOf]);
   // أرخص سعر محسوب على المصادر المعروضة فقط (يتجاهل المصادر المُزالة).
   const cheapestVisible = useCallback((g) => {
     let min = null;
@@ -424,6 +445,14 @@ export default function Prices() {
                         <X size={13} />
                       </button>
                     </div>
+                    <input
+                      type="number"
+                      value={priorities?.[s.item_id] ?? ''}
+                      onChange={(e) => changePriority(s.item_id, e.target.value)}
+                      placeholder="#"
+                      title="أولوية عند تساوي السعر (الأصغر أولاً)"
+                      className="mt-1 w-12 text-center bg-white text-gray-800 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-300"
+                    />
                   </th>
                 ))}
                 <th className="py-3 px-3 text-center whitespace-nowrap">الأرخص</th>
@@ -432,6 +461,7 @@ export default function Prices() {
             <tbody>
               {filteredGroups.map((g) => {
                 const cheapest = cheapestVisible(g);
+                const winnerId = cheapestWinnerId(g);
                 return (
                 <tr key={g.match_key} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-2 px-3 font-medium text-gray-800 sticky right-0 z-10 bg-white">
@@ -445,7 +475,7 @@ export default function Prices() {
                   </td>
                   {visibleSources.map((s) => {
                     const cell = g.prices[s.item_id];
-                    const isCheapest = cell && cheapest != null && cell.available && cell.price === cheapest;
+                    const isCheapest = s.item_id === winnerId;
                     if (!cell) {
                       return (
                         <td key={s.item_id} className="py-2 px-3 text-center">
