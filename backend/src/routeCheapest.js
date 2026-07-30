@@ -55,27 +55,33 @@ export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId 
     WHERE tenant_id = ? AND tab = ?
   `).all(tenantId, tab);
 
-  // تجميع حسب (النوع + رقم الربط) — نفس منطق /compare للكونتور.
+  // تجميع برقم الربط فقط (نفس مفتاح /compare: `k<ref>`) — كل المزوّدين معاً.
+  // فئة الصفّ = فئة znet (المرجع)، فنفلتر النوع بعد التجميع لا لكل صفّ.
   const keyOf = (r) => {
     const ref = normalizeRef(r.external_ref);
-    return ref ? makeMatchKey({ name: `${r.category || ''} ${ref}` }) : makeMatchKey({ name: r.name });
+    return ref ? `k${ref}` : makeMatchKey({ name: r.name });
   };
 
   const groups = new Map();
   for (const r of rows) {
-    if (wantCat && norm(r.category).toLowerCase() !== wantCat) continue;
     const k = keyOf(r);
     if (!groups.has(k)) {
       groups.set(k, {
         link_ref: normalizeRef(r.external_ref),
         display_name: norm(r.name),
         category: norm(r.category),
-        candidates: new Map(),   // source_item_id → {name, price, available}
+        candidates: new Map(),
       });
     }
     const g = groups.get(k);
-    if (!g.link_ref) g.link_ref = normalizeRef(r.external_ref);
-    // احتفظ بأقل سعر لكل مصدر (لو تكرّر)
+    if (r.provider_type === 'znet') {
+      // znet هو مرجع الفئة/الاسم/رقم الربط.
+      g.link_ref = normalizeRef(r.external_ref) || g.link_ref;
+      g.display_name = norm(r.name);
+      g.category = norm(r.category);
+    } else if (!g.link_ref) {
+      g.link_ref = normalizeRef(r.external_ref);
+    }
     const cur = g.candidates.get(r.source_item_id);
     if (cur == null || (r.price != null && r.price < cur.price)) {
       g.candidates.set(r.source_item_id, {
@@ -87,9 +93,29 @@ export function computeRoutingPlan(db, tenantId, tab, category, { defaultItemId 
     }
   }
 
+  // الروابط اليدوية: أضِف سعر المصدر المربوط إلى المجموعة برقم ربط znet.
+  const pkgByRef = new Map();
+  for (const r of rows) pkgByRef.set(`${r.source_item_id}|${r.external_ref}`, r);
+  const links = db.prepare(
+    'SELECT match_key, source_item_id, external_ref FROM price_links WHERE tenant_id = ? AND tab = ?'
+  ).all(tenantId, tab);
+  for (const lk of links) {
+    const g = groups.get(lk.match_key);
+    if (!g) continue;
+    const pkg = pkgByRef.get(`${lk.source_item_id}|${lk.external_ref}`);
+    if (!pkg) continue;
+    g.candidates.set(lk.source_item_id, {
+      source_item_id: lk.source_item_id,
+      name: norm(pkg.source_name),
+      price: pkg.price,
+      available: !!pkg.is_available,
+    });
+  }
+
   const plans = [];
   for (const g of groups.values()) {
-    if (!g.link_ref) continue;   // لا يمكن مطابقتها في زينت بلا رقم ربط
+    if (!g.link_ref) continue;                                   // بلا رقم ربط لا مطابقة
+    if (wantCat && norm(g.category).toLowerCase() !== wantCat) continue;  // فلتر النوع (فئة znet)
     const ranked = [...g.candidates.values()]
       .filter((c) => c.source_item_id !== defaultItemId
         && (!includeSet || includeSet.has(c.source_item_id))   // الأعمدة المُضافة فقط
