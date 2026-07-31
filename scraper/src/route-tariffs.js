@@ -371,6 +371,30 @@ async function clickPasifEt(page) {
   });
 }
 
+// تشخيص: يُرجع كل أرقام الربط الظاهرة + هل في كل صفّ checkbox — لمعرفة سبب أي
+// row_not_found فوراً (رقم غير موجود؟ الفلتر خطأ؟ لا checkbox؟).
+async function readKupurDiag(page) {
+  return page.evaluate(() => {
+    const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const isApi = (sel) => {
+      const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
+      return o.includes('kapat') && o.includes('manuel');
+    };
+    const norm = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
+    const kupurs = [];
+    let rowsWithBox = 0, apiRows = 0;
+    for (const tr of document.querySelectorAll('table tr')) {
+      const kids = [...tr.children];
+      const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
+      if (a < 2) continue;
+      apiRows++;
+      if (tr.querySelector('input[type="checkbox"]')) rowsWithBox++;
+      kupurs.push(norm(clean(kids[a - 2].textContent)));
+    }
+    return { apiRows, rowsWithBox, kupurs };
+  });
+}
+
 // تدفّق التعطيل: يطابق كل رقم ربط في PLAN، يضع علامة على checkbox،
 // وفي وضع apply يضغط «Pasif Et» مرّة واحدة بعد تحديد الكل.
 async function applyDeactivate(page, write) {
@@ -382,6 +406,12 @@ async function applyDeactivate(page, write) {
     if (r.status === 'checked' || r.status === 'already') checked++;
     results.push({ ref, name: r.name || '', status: r.status });
   }
+  // لم نجد أي صفّ؟ أرفق تشخيصاً (أرقام الربط الظاهرة + وجود checkbox).
+  let diag = null;
+  if (checked === 0) {
+    const d = await readKupurDiag(page);
+    diag = { apiRows: d.apiRows, rowsWithBox: d.rowsWithBox, kupursSample: d.kupurs.slice(0, 80) };
+  }
   let pasif = { clicked: false };
   if (write && checked > 0) {
     pasif = await clickPasifEt(page);
@@ -390,7 +420,7 @@ async function applyDeactivate(page, write) {
       await page.waitForTimeout(1200);
     }
   }
-  return { planned: refs.length, checked, pasif, results };
+  return { planned: refs.length, checked, pasif, results, ...(diag ? { diag } : {}) };
 }
 
 async function main() {
