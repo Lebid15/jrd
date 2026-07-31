@@ -322,8 +322,9 @@ async function applyPlan(page, write) {
 }
 
 // ─── تعطيل الباقات غير المتوفّرة (Pasif Et) ─────────────────────────────────
-// يحدّد صفّاً برقم ربطه ويضع علامة على checkbox الخاص به. status: checked |
-// already | no_checkbox | row_not_found. الكوبير = نفس منطق readRow.
+// يجد صفّاً برقم ربطه ويضع على checkbox الخاص به سِمة data-robot-box (لا ينقر —
+// النقر الحقيقي لاحقاً عبر Playwright كي تُطلَق معالِجات زينت التي تُظهر الزر).
+// status: found | already | no_checkbox | row_not_found.
 async function checkRow(page, ref, write) {
   return page.evaluate(({ ref, write }) => {
     const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -344,31 +345,40 @@ async function checkRow(page, ref, write) {
     const box = tr.querySelector('input[type="checkbox"]');
     if (!box) return { status: 'no_checkbox', name };
     if (box.checked) return { status: 'already', name };
-    if (write) {
-      box.checked = true;
-      box.dispatchEvent(new Event('click', { bubbles: true }));
-      box.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-    return { status: 'checked', name };
+    if (write) box.setAttribute('data-robot-box', '1'); // علامة يلتقطها Playwright للنقر الحقيقي
+    return { status: 'found', name };
   }, { ref, write });
 }
 
-// يبحث عن زرّ «Pasif Et» (يظهر فقط بعد التحديد) ويضغطه.
+// ينقر (نقراً حقيقياً) كل checkbox مُعلَّم، فتُطلَق معالِجات زينت التي تُسجّل التحديد
+// وتُنزلق شريط «العمليات المُحدَّدة» (secili_islemleri) كاشفةً الأزرار.
+async function clickMarkedBoxes(page) {
+  const boxes = page.locator('input[data-robot-box="1"]');
+  const n = await boxes.count();
+  for (let i = 0; i < n; i++) {
+    try { await boxes.nth(i).check({ timeout: 8000 }); } catch { try { await boxes.nth(i).click({ timeout: 8000, force: true }); } catch {} }
+    await page.waitForTimeout(200);
+  }
+  return n;
+}
+
+// يضغط زرّ «Pasif Et» (input[name=toplu_pasif]) بعد أن يصبح ظاهراً. يعيد المحاولة
+// حتى ينزلق الشريط للأسفل (الزر موجود دائماً لكنه مخفيّ داخل حاوية مطويّة).
 async function clickPasifEt(page) {
-  return page.evaluate(() => {
-    const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-    const re = /pasif\s*et/i;
-    const cands = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
-    const el = cands.find((c) => {
-      const txt = clean(c.tagName === 'INPUT' ? c.value : c.textContent);
-      const style = window.getComputedStyle(c);
-      const visible = style.display !== 'none' && style.visibility !== 'hidden' && c.offsetParent !== null;
-      return re.test(txt) && visible;
-    });
-    if (!el) return { clicked: false };
-    el.click();
-    return { clicked: true, label: clean(el.tagName === 'INPUT' ? el.value : el.textContent) };
-  });
+  const btn = page.locator('input[name="toplu_pasif"], input[value="Pasif Et" i], input[value*="Pasif" i]').first();
+  if (await btn.count() === 0) return { clicked: false, reason: 'button_absent' };
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      await btn.click({ timeout: 5000 });         // نافذة التأكيد تُقبَل تلقائياً (page.on dialog)
+      const label = (await btn.getAttribute('value')) || 'Pasif Et';
+      return { clicked: true, label };
+    } catch {
+      await page.waitForTimeout(700);              // انتظر انزلاق الشريط ثم أعِد المحاولة
+    }
+  }
+  // ملاذ أخير: نقر مُجبَر متجاوزاً فحص الظهور.
+  try { await btn.click({ force: true, timeout: 4000 }); return { clicked: true, label: 'Pasif Et', forced: true }; }
+  catch (e) { return { clicked: false, reason: 'not_clickable' }; }
 }
 
 // تشخيص: يُرجع كل أرقام الربط الظاهرة + هل في كل صفّ checkbox — لمعرفة سبب أي
@@ -395,15 +405,15 @@ async function readKupurDiag(page) {
   });
 }
 
-// تدفّق التعطيل: يطابق كل رقم ربط في PLAN، يضع علامة على checkbox،
-// وفي وضع apply يضغط «Pasif Et» مرّة واحدة بعد تحديد الكل.
+// تدفّق التعطيل: (1) يجد كل صفّ برقم ربطه ويُعلّم checkbox‑ه، (2) في وضع apply
+// ينقر المربّعات نقراً حقيقياً (فيظهر الزر)، ينتظر انزلاق الشريط، ثم يضغط «Pasif Et».
 async function applyDeactivate(page, write) {
   const refs = Object.keys(PLAN);
   const results = [];
   let checked = 0;
   for (const ref of refs) {
     const r = await checkRow(page, ref, write);
-    if (r.status === 'checked' || r.status === 'already') checked++;
+    if (r.status === 'found' || r.status === 'already') checked++;
     results.push({ ref, name: r.name || '', status: r.status });
   }
   // لم نجد أي صفّ؟ أرفق تشخيصاً (المطلوب مقابل الظاهر + وجود checkbox).
@@ -418,14 +428,17 @@ async function applyDeactivate(page, write) {
     };
   }
   let pasif = { clicked: false };
+  let boxesClicked = 0;
   if (write && checked > 0) {
+    boxesClicked = await clickMarkedBoxes(page); // نقر حقيقي → يُظهر الزر
+    await page.waitForTimeout(1500);             // مهلة انزلاق شريط العمليات
     pasif = await clickPasifEt(page);
     if (pasif.clicked) {
       await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
-      await page.waitForTimeout(1200);
+      await page.waitForTimeout(1500);
     }
   }
-  return { planned: refs.length, checked, pasif, results, ...(diag ? { diag } : {}) };
+  return { planned: refs.length, checked, boxesClicked, pasif, results, ...(diag ? { diag } : {}) };
 }
 
 async function main() {

@@ -732,7 +732,7 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
         {result && result.action === 'deactivate' ? (
           <div className="px-4 pb-3 text-xs text-gray-600">
             التعطيل ({result.mode}): حُدِّد {result.checked} باقة من أصل {result.planned}
-            {result.mode === 'apply' && <span> · زر Pasif Et: {result.pasif?.clicked ? '✓ ضُغط' : '✗ لم يُعثر عليه'}</span>}
+            {result.mode === 'apply' && <span> · نُقِرت مربّعات: {result.boxesClicked ?? 0} · زر Pasif Et: {result.pasif?.clicked ? '✓ ضُغط' : `✗ (${result.pasif?.reason || 'لم يُعثر عليه'})`}</span>}
             {(result.results || []).some((r) => r.status === 'row_not_found') &&
               <span className="text-amber-600"> · بعض الأرقام لم تُوجد في الصفحة (تحقّق من الفلتر)</span>}
             {result.diag && (
