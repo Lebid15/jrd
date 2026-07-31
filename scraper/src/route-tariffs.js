@@ -175,12 +175,52 @@ async function trySelect(page, selector, label) {
   }
 }
 
+// يعرض كل الصفوف في صفحة واحدة (يقضي على الترقيم عبر 8 صفحات). لا نفترض قيمة
+// «10000» ثابتة — نختار أكبر خيار رقمي أو خياراً يعني «الكل» (Hepsi/Tümü/All).
+// نجرّب #perPageCount أولاً ثم أي select يبدو كمُحدِّد عدد الصفوف.
+async function showAllRows(page) {
+  const changed = await page.evaluate(() => {
+    const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const ALL_RE = /hepsi|tümü|tumu|all|show all/i;
+    const pickBest = (sel) => {
+      let bestIdx = -1, bestVal = -1;
+      [...sel.options].forEach((o, i) => {
+        const t = clean(o.textContent);
+        if (ALL_RE.test(t) || ALL_RE.test(o.value)) { bestIdx = i; bestVal = Infinity; return; }
+        const n = parseInt(t.replace(/[^\d]/g, ''), 10);
+        if (!Number.isNaN(n) && n > bestVal && bestVal !== Infinity) { bestVal = n; bestIdx = i; }
+      });
+      if (bestIdx < 0 || sel.selectedIndex === bestIdx) return false;
+      sel.selectedIndex = bestIdx;
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    };
+    // مرشّح مُحدِّد عدد الصفوف: id/name فيه per/page/length أو خياراته أرقام + «الكل».
+    const byId = document.querySelector('#perPageCount, select[name="perPageCount"]');
+    if (byId && pickBest(byId)) return true;
+    let any = false;
+    for (const sel of document.querySelectorAll('select')) {
+      const opts = [...sel.options].map((o) => clean(o.textContent));
+      const looksLikeLength = opts.length >= 2 &&
+        opts.every((o) => /^\d+$/.test(o) || ALL_RE.test(o)) &&
+        (/per|page|length|say|adet/i.test(sel.id + ' ' + sel.name) || opts.some((o) => ALL_RE.test(o)));
+      if (looksLikeLength && pickBest(sel)) any = true;
+    }
+    return any;
+  }).catch(() => false);
+  if (changed) {
+    await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
+    await page.waitForTimeout(900);
+  }
+  return changed;
+}
+
 async function applyFilter(page) {
   // 1) صفِّ حسب المشغّل أولاً (اسم الحقل الفعلي). لا نحتاج فلتر النوع —
   //    المطابقة برقم الربط (küpür) تكفي لأنه فريد داخل المشغّل.
   if (OPERATOR) await trySelect(page, 'select[name="filitre_operator"]', OPERATOR);
   // 2) ثم اعرض كل الصفوف في صفحة واحدة (تفادي الترقيم عبر 8 صفحات) — آخر إجراء.
-  await trySelect(page, '#perPageCount', '10000');
+  await showAllRows(page);
 }
 
 // يقرأ صفّاً واحداً برقم ربطه: هل وُجد؟ اسمه، عدد الخانات، وأسماء الخيارات المتاحة.
