@@ -233,12 +233,13 @@ async function readRow(page, ref) {
       const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
       return o.includes('kapat') && o.includes('manuel');
     };
-    const norm = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
+    const numOf = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? parseInt(m[0], 10) : NaN; };
+    const want = numOf(ref);
     for (const tr of document.querySelectorAll('table tr')) {
       const kids = [...tr.children];
       const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
       if (a < 2) continue;
-      if (norm(clean(kids[a - 2].textContent)) !== norm(ref)) continue;
+      if (Number.isNaN(want) || numOf(clean(kids[a - 2].textContent)) !== want) continue;
       const sels = [...tr.querySelectorAll('select')].filter(isApi);
       const name = kids.map((k) => clean(k.textContent)).find((t) => t && !/^\d/.test(t)) || '';
       return {
@@ -260,13 +261,14 @@ async function setOneSlot(page, ref, apiIdx, want, write) {
       const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
       return o.includes('kapat') && o.includes('manuel');
     };
-    const norm = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
+    const numOf = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? parseInt(m[0], 10) : NaN; };
+    const refNum = numOf(ref);
     let tr = null;
     for (const row of document.querySelectorAll('table tr')) {
       const kids = [...row.children];
       const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
       if (a < 2) continue;
-      if (norm(clean(kids[a - 2].textContent)) === norm(ref)) { tr = row; break; }
+      if (!Number.isNaN(refNum) && numOf(clean(kids[a - 2].textContent)) === refNum) { tr = row; break; }
     }
     if (!tr) return { status: 'row_not_found' };
     const sels = [...tr.querySelectorAll('select')].filter(isApi);
@@ -332,13 +334,14 @@ async function checkRow(page, ref, write) {
       const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
       return o.includes('kapat') && o.includes('manuel');
     };
-    const norm = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? m[0] : ''; };
+    const numOf = (s) => { const m = String(s ?? '').match(/-?\d+/); return m ? parseInt(m[0], 10) : NaN; };
+    const want = numOf(ref);
     let tr = null;
     for (const row of document.querySelectorAll('table tr')) {
       const kids = [...row.children];
       const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
       if (a < 2) continue;
-      if (norm(clean(kids[a - 2].textContent)) === norm(ref)) { tr = row; break; }
+      if (!Number.isNaN(want) && numOf(clean(kids[a - 2].textContent)) === want) { tr = row; break; }
     }
     if (!tr) return { status: 'row_not_found' };
     const name = [...tr.children].map((k) => clean(k.textContent)).find((t) => t && !/^\d/.test(t)) || '';
@@ -423,7 +426,7 @@ async function applyDeactivate(page, write) {
     diag = {
       apiRows: d.apiRows, rowsWithBox: d.rowsWithBox,
       searched: JSON.stringify(refs),                 // ما بحث عنه الروبوت (يكشف محارف خفية)
-      presentMatch: d.kupurs.includes(String(refs[0])), // هل أوّل مطلوب موجود حرفياً؟
+      presentMatch: (() => { const w = parseInt(String(refs[0] ?? '').match(/-?\d+/)?.[0] ?? '', 10); return d.kupurs.some((k) => parseInt(k, 10) === w); })(),
       kupursSample: d.kupurs.slice(0, 80),
     };
   }
