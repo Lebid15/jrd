@@ -738,6 +738,7 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
             {result.diag && (
               <div className="mt-1 text-[11px] text-gray-500">
                 تشخيص: صفوف بها API = {result.diag.apiRows} · صفوف بها checkbox = {result.diag.rowsWithBox}
+                <div className="mt-0.5 text-rose-600 break-all">المطلوب (searched): {result.diag.searched} · موجود حرفياً: {String(result.diag.presentMatch)}</div>
                 <div className="mt-0.5 text-gray-400 break-all">أرقام الربط الظاهرة: {(result.diag.kupursSample || []).join('، ')}</div>
               </div>
             )}
