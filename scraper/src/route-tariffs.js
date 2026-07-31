@@ -215,12 +215,47 @@ async function showAllRows(page) {
   return changed;
 }
 
+// يعدّ صفوف الـ API الحالية في الجدول (صفوف بها قائمة Kapat/Manuel).
+async function countApiRows(page) {
+  return page.evaluate(() => {
+    const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    const isApi = (sel) => {
+      const o = [...sel.options].map((x) => clean(x.textContent).toLowerCase());
+      return o.includes('kapat') && o.includes('manuel');
+    };
+    let n = 0;
+    for (const tr of document.querySelectorAll('table tr')) {
+      const kids = [...tr.children];
+      const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
+      if (a >= 2) n++;
+    }
+    return n;
+  });
+}
+
+// ينتظر استقرار الجدول (الفلتر يُعيد تحميله لا‑تزامنياً؛ المطابقة قبل اكتماله تفشل).
+// يستقرّ = عدد صفوف > 0 وثابت عبر قراءتين متتاليتين، أو تنتهي المهلة.
+async function waitForRowsStable(page, { timeoutMs = 15000 } = {}) {
+  const start = Date.now();
+  let prev = -1, stable = 0;
+  while (Date.now() - start < timeoutMs) {
+    const n = await countApiRows(page);
+    if (n > 0 && n === prev) { if (++stable >= 2) return n; }
+    else stable = 0;
+    prev = n;
+    await page.waitForTimeout(500);
+  }
+  return prev;
+}
+
 async function applyFilter(page) {
   // 1) صفِّ حسب المشغّل أولاً (اسم الحقل الفعلي). لا نحتاج فلتر النوع —
   //    المطابقة برقم الربط (küpür) تكفي لأنه فريد داخل المشغّل.
   if (OPERATOR) await trySelect(page, 'select[name="filitre_operator"]', OPERATOR);
-  // 2) ثم اعرض كل الصفوف في صفحة واحدة (تفادي الترقيم عبر 8 صفحات) — آخر إجراء.
+  // 2) ثم اعرض كل الصفوف في صفحة واحدة (تفادي الترقيم عبر 8 صفحات).
   await showAllRows(page);
+  // 3) انتظر اكتمال تحميل الجدول قبل أي مطابقة (يمنع سباق «الصفّ غير موجود»).
+  await waitForRowsStable(page);
 }
 
 // يقرأ صفّاً واحداً برقم ربطه: هل وُجد؟ اسمه، عدد الخانات، وأسماء الخيارات المتاحة.
@@ -415,7 +450,12 @@ async function applyDeactivate(page, write) {
   const results = [];
   let checked = 0;
   for (const ref of refs) {
-    const r = await checkRow(page, ref, write);
+    let r = await checkRow(page, ref, write);
+    // سباق التحميل: لو لم يُوجد الصفّ، انتظر وأعِد المحاولة مرّتين.
+    for (let attempt = 0; attempt < 2 && r.status === 'row_not_found'; attempt++) {
+      await page.waitForTimeout(900);
+      r = await checkRow(page, ref, write);
+    }
     if (r.status === 'found' || r.status === 'already') checked++;
     results.push({ ref, name: r.name || '', status: r.status });
   }
