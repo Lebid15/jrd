@@ -238,7 +238,7 @@ async function readRow(page, ref) {
       const kids = [...tr.children];
       const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
       if (a < 2) continue;
-      if (norm(clean(kids[a - 2].textContent)) !== String(ref)) continue;
+      if (norm(clean(kids[a - 2].textContent)) !== norm(ref)) continue;
       const sels = [...tr.querySelectorAll('select')].filter(isApi);
       const name = kids.map((k) => clean(k.textContent)).find((t) => t && !/^\d/.test(t)) || '';
       return {
@@ -266,7 +266,7 @@ async function setOneSlot(page, ref, apiIdx, want, write) {
       const kids = [...row.children];
       const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
       if (a < 2) continue;
-      if (norm(clean(kids[a - 2].textContent)) === String(ref)) { tr = row; break; }
+      if (norm(clean(kids[a - 2].textContent)) === norm(ref)) { tr = row; break; }
     }
     if (!tr) return { status: 'row_not_found' };
     const sels = [...tr.querySelectorAll('select')].filter(isApi);
@@ -337,7 +337,7 @@ async function checkRow(page, ref, write) {
       const kids = [...row.children];
       const a = kids.findIndex((td) => [...td.querySelectorAll('select')].some(isApi));
       if (a < 2) continue;
-      if (norm(clean(kids[a - 2].textContent)) === String(ref)) { tr = row; break; }
+      if (norm(clean(kids[a - 2].textContent)) === norm(ref)) { tr = row; break; }
     }
     if (!tr) return { status: 'row_not_found' };
     const name = [...tr.children].map((k) => clean(k.textContent)).find((t) => t && !/^\d/.test(t)) || '';
@@ -406,11 +406,16 @@ async function applyDeactivate(page, write) {
     if (r.status === 'checked' || r.status === 'already') checked++;
     results.push({ ref, name: r.name || '', status: r.status });
   }
-  // لم نجد أي صفّ؟ أرفق تشخيصاً (أرقام الربط الظاهرة + وجود checkbox).
+  // لم نجد أي صفّ؟ أرفق تشخيصاً (المطلوب مقابل الظاهر + وجود checkbox).
   let diag = null;
   if (checked === 0) {
     const d = await readKupurDiag(page);
-    diag = { apiRows: d.apiRows, rowsWithBox: d.rowsWithBox, kupursSample: d.kupurs.slice(0, 80) };
+    diag = {
+      apiRows: d.apiRows, rowsWithBox: d.rowsWithBox,
+      searched: JSON.stringify(refs),                 // ما بحث عنه الروبوت (يكشف محارف خفية)
+      presentMatch: d.kupurs.includes(String(refs[0])), // هل أوّل مطلوب موجود حرفياً؟
+      kupursSample: d.kupurs.slice(0, 80),
+    };
   }
   let pasif = { clicked: false };
   if (write && checked > 0) {
