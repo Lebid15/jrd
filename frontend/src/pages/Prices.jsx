@@ -735,6 +735,12 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
             {result.mode === 'apply' && <span> · زر Pasif Et: {result.pasif?.clicked ? '✓ ضُغط' : '✗ لم يُعثر عليه'}</span>}
             {(result.results || []).some((r) => r.status === 'row_not_found') &&
               <span className="text-amber-600"> · بعض الأرقام لم تُوجد في الصفحة (تحقّق من الفلتر)</span>}
+            {result.diag && (
+              <div className="mt-1 text-[11px] text-gray-500">
+                تشخيص: صفوف بها API = {result.diag.apiRows} · صفوف بها checkbox = {result.diag.rowsWithBox}
+                <div className="mt-0.5 text-gray-400 break-all">أرقام الربط الظاهرة: {(result.diag.kupursSample || []).join('، ')}</div>
+              </div>
+            )}
           </div>
         ) : result ? (
           <div className="px-4 pb-3 text-xs text-gray-600">
