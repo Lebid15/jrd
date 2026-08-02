@@ -561,19 +561,42 @@ export default function Prices() {
 // ════════════════════════════════════════════════════════════════════════════
 // نافذة «ربط حسب الأرخص»: معاينة الخطة (آمن) → فحص على زينت (بلا تغيير) → تنفيذ.
 // ════════════════════════════════════════════════════════════════════════════
+// قيمة مميّزة لخيار «كل المنتجات» (تُترجَم لنوع فارغ في الباك إند = بلا فلتر).
+const ALL_TYPES = '__all__';
+
 function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories, fmt, onClose }) {
-  const [type, setType] = useState(categories[0] || '');
+  const [type, setType] = useState('');
   const [plan, setPlan] = useState(null);       // مصفوفة الخطة من المعاينة
+  const [excludedCats, setExcludedCats] = useState(() => new Set()); // أنواع مُستثناة من «كل المنتجات»
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState('');
   const [result, setResult] = useState(null);   // نتيجة dryrun/apply
   const [inspect, setInspect] = useState(null); // بنية الصفحة (تشخيص)
 
+  // «كل المنتجات» → نوع فارغ للباك إند (بلا فلتر فئة).
+  const apiType = type === ALL_TYPES ? '' : type;
+  const isAllTypes = type === ALL_TYPES;
+
+  // أنواع الخطة (للاستثناء) والخطة الفعلية المُرسَلة (بعد حذف المستثنى).
+  const planCats = useMemo(() => {
+    const set = new Set();
+    for (const p of (plan || [])) if (p.category) set.add(p.category);
+    return [...set].sort((a, b) => a.localeCompare(b, 'ar'));
+  }, [plan]);
+  const sentPlan = useMemo(
+    () => (plan || []).filter((p) => !excludedCats.has(p.category)),
+    [plan, excludedCats],
+  );
+  const toggleCat = (c) => setExcludedCats((prev) => {
+    const n = new Set(prev); n.has(c) ? n.delete(c) : n.add(c); return n;
+  });
+
   const preview = async () => {
     if (!type) return;
     setBusy(true); setPhase('يحدّث الأسعار ثم يحسب الخطة…'); setResult(null); setInspect(null);
+    setExcludedCats(new Set());
     try {
-      const res = await api.post('/prices/route/preview', { tab, type, default_item_id: defaultId, source_item_ids: sourceIds, source_priority: priorities || {}, refresh: true });
+      const res = await api.post('/prices/route/preview', { tab, type: apiType, default_item_id: defaultId, source_item_ids: sourceIds, source_priority: priorities || {}, refresh: true });
       setPlan(res.data?.plan || []);
     } catch (e) {
       toast.error(e.response?.data?.error || 'خطأ في المعاينة');
@@ -581,12 +604,13 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
   };
 
   const run = async (mode) => {
-    if (mode === 'apply' && !confirm('سيكتب الروبوت التوجيه فعلياً على لوحة زينت. متابعة؟')) return;
+    if (mode !== 'inspect' && !sentPlan.length) { toast.warn('لا باقات في الخطة (كلها مُستثناة؟)'); return; }
+    if (mode === 'apply' && !confirm(`سيكتب الروبوت التوجيه فعلياً على لوحة زينت لـ ${sentPlan.length} باقة. متابعة؟`)) return;
     setBusy(true);
     setPhase(mode === 'inspect' ? 'يفحص بنية الصفحة…' : mode === 'apply' ? 'ينفّذ التوجيه على زينت…' : 'يطابق مع زينت بدون تغيير…');
     setResult(null); setInspect(null);
     try {
-      const res = await api.post('/prices/route/run', { tab, type, mode, plan: plan || [] });
+      const res = await api.post('/prices/route/run', { tab, type: apiType, mode, plan: sentPlan });
       if (mode === 'inspect') setInspect(res.data);
       else setResult(res.data);
       if (mode === 'apply') toast.success(`تم: ${res.data?.applied || 0} باقة`);
@@ -596,7 +620,7 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
   };
 
   // الباقات غير المتوفّرة لدى أي مزوّد = كل خاناتها Kapat (موجودة في الافتراضي فقط).
-  const unavailable = (plan || []).filter((p) => (p.slots || []).length && p.slots.every((s) => s.name === 'Kapat'));
+  const unavailable = sentPlan.filter((p) => (p.slots || []).length && p.slots.every((s) => s.name === 'Kapat'));
 
   // تعطيل غير المتوفّرة (Pasif Et) على لوحة زينت.
   const deactivate = async (mode) => {
@@ -606,7 +630,7 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
     setPhase(mode === 'apply' ? 'يعطّل الباقات غير المتوفّرة…' : 'يطابق غير المتوفّرة بدون تغيير…');
     setResult(null); setInspect(null);
     try {
-      const res = await api.post('/prices/route/run', { tab, type, mode, action: 'deactivate', plan: unavailable });
+      const res = await api.post('/prices/route/run', { tab, type: apiType, mode, action: 'deactivate', plan: unavailable });
       setResult(res.data);
       if (mode === 'apply') {
         if (res.data?.pasif?.clicked) toast.success(`تم تعطيل ${res.data?.checked || 0} باقة`);
@@ -635,9 +659,10 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
             <CategorySelect
               value={type}
               options={categories}
-              onChange={(v) => { setType(v); setPlan(null); setResult(null); }}
+              onChange={(v) => { setType(v); setPlan(null); setResult(null); setExcludedCats(new Set()); }}
               placeholder="اختر النوع..."
-              allLabel={null}
+              allLabel="كل المنتجات"
+              allValue={ALL_TYPES}
             />
           </div>
           <button onClick={preview} disabled={busy || !type}
@@ -646,6 +671,38 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
           </button>
           {phase && <span className="text-xs text-gray-500">{phase}</span>}
         </div>
+
+        {/* استثناء أنواع من «كل المنتجات» */}
+        {isAllTypes && (plan?.length ?? 0) > 0 && planCats.length > 1 && (
+          <div className="px-4 py-3 border-b bg-gray-50">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold text-gray-600">استثنِ أنواعاً (اضغط لاستثناء/إرجاع النوع)</span>
+              <span className="text-xs text-gray-500">
+                مُدرَج: {sentPlan.length} / {plan.length} باقة
+                {excludedCats.size > 0 && (
+                  <button onClick={() => setExcludedCats(new Set())} className="mr-2 text-indigo-500 hover:text-indigo-700 underline">إرجاع الكل</button>
+                )}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+              {planCats.map((c) => {
+                const off = excludedCats.has(c);
+                return (
+                  <button
+                    key={c}
+                    onClick={() => toggleCat(c)}
+                    title={off ? 'مُستثنى — اضغط للإرجاع' : 'مُدرَج — اضغط للاستثناء'}
+                    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border transition-colors ${off
+                      ? 'bg-gray-100 text-gray-400 border-gray-200 line-through'
+                      : 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'}`}
+                  >
+                    {off ? <Plus size={12} /> : <X size={12} />}{c}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* جدول الخطة */}
         <div className="flex-1 overflow-auto">
@@ -671,11 +728,16 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
               <tbody>
                 {plan.map((row) => {
                   const res = result?.results?.find((r) => String(r.ref) === String(row.link_ref));
+                  const excluded = excludedCats.has(row.category);
                   return (
-                    <tr key={row.link_ref} className="border-b border-gray-100">
+                    <tr key={row.link_ref} className={`border-b border-gray-100 ${excluded ? 'opacity-40' : ''}`}>
                       <td className="py-2 px-3">
-                        <div className="font-medium text-gray-800 truncate max-w-[220px]" title={row.display_name}>{row.display_name}</div>
+                        <div className="font-medium text-gray-800 truncate max-w-[220px] flex items-center gap-1" title={row.display_name}>
+                          {excluded && <span className="text-[10px] text-gray-400 border border-gray-300 rounded px-1">مُستثنى</span>}
+                          {row.display_name}
+                        </div>
                         <div className="text-xs text-gray-400">
+                          {isAllTypes && row.category ? <span className="text-gray-500">{row.category} · </span> : null}
                           رقم الربط: {row.link_ref}
                           {res && (res.set?.length ? <span className="text-emerald-600"> · ✓ نُفّذ ({res.set.length})</span>
                             : res.missing?.length ? <span className="text-red-500"> · أسماء غير موجودة: {res.missing.join('، ')}</span>
@@ -726,11 +788,11 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
           <button onClick={() => run('inspect')} disabled={busy}
             className="text-xs text-gray-500 hover:text-gray-700 underline disabled:opacity-50">فحص بنية الصفحة</button>
           <div className="mr-auto flex items-center gap-2">
-            <button onClick={() => run('dryrun')} disabled={busy || !plan?.length}
+            <button onClick={() => run('dryrun')} disabled={busy || !sentPlan.length}
               className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50">
               فحص على زينت (بدون تغيير)
             </button>
-            <button onClick={() => run('apply')} disabled={busy || !plan?.length}
+            <button onClick={() => run('apply')} disabled={busy || !sentPlan.length}
               className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50">
               تنفيذ على زينت
             </button>
@@ -762,8 +824,10 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
 
 // منسدلة فلتر/اختيار المنتج مع حقل بحث.
 // - placeholder: نص الزر حين لا قيمة.
-// - allLabel: نص خيار «الكل» (مسحُ الاختيار)؛ مرِّر null لإخفائه (اختيار إلزامي).
-function CategorySelect({ value, options, onChange, placeholder = 'كل المنتجات', allLabel = 'كل المنتجات' }) {
+// - allLabel: نص خيار «الكل»؛ مرِّر null لإخفائه (اختيار إلزامي).
+// - allValue: القيمة التي يُرجعها خيار «الكل» (افتراضياً '' = مسح الاختيار؛ يمكن جعلها
+//   قيمة مميّزة مثل «كل المنتجات» لتمييزها عن «لا اختيار»).
+function CategorySelect({ value, options, onChange, placeholder = 'كل المنتجات', allLabel = 'كل المنتجات', allValue = '' }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const ref = useRef(null);
@@ -779,6 +843,8 @@ function CategorySelect({ value, options, onChange, placeholder = 'كل المن
   const needle = search.trim().toLowerCase();
   const filtered = needle ? options.filter((o) => o.toLowerCase().includes(needle)) : options;
   const pick = (v) => { onChange(v); setOpen(false); setSearch(''); };
+  const isAll = value === allValue;
+  const btnLabel = isAll ? (allLabel ?? '') : value;
 
   return (
     <div ref={ref} className="relative sm:w-64">
@@ -788,7 +854,7 @@ function CategorySelect({ value, options, onChange, placeholder = 'كل المن
         className="w-full flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
       >
         <Filter size={16} className="text-gray-400 shrink-0" />
-        <span className={`flex-1 truncate text-right ${value ? 'text-gray-800' : 'text-gray-500'}`}>{value || placeholder}</span>
+        <span className={`flex-1 truncate text-right ${btnLabel ? 'text-gray-800' : 'text-gray-500'}`}>{btnLabel || placeholder}</span>
         <ChevronDown size={16} className="text-gray-400 shrink-0" />
       </button>
       {open && (
@@ -810,10 +876,10 @@ function CategorySelect({ value, options, onChange, placeholder = 'كل المن
               <li>
                 <button
                   type="button"
-                  onClick={() => pick('')}
-                  className={`w-full flex items-center justify-between px-3 py-2 text-sm text-right hover:bg-emerald-50 ${!value ? 'text-emerald-700 font-bold' : 'text-gray-700'}`}
+                  onClick={() => pick(allValue)}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm text-right hover:bg-emerald-50 ${isAll ? 'text-emerald-700 font-bold' : 'text-gray-700'}`}
                 >
-                  {allLabel} {!value && <Check size={15} />}
+                  {allLabel} {isAll && <Check size={15} />}
                 </button>
               </li>
             )}
