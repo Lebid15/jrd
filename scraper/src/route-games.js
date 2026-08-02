@@ -6,8 +6,9 @@ import fs from 'fs';
 
 // ════════════════════════════════════════════════════════════════════════════
 // روبوت توجيه الألعاب على لوحة زينت: OyunPin/admin_allPinList.php.
-// خانتا توجيه لكل منتج: Api 1 و Api 2 (آخر قائمتين في الصف؛ الأولى «Gönderilebilir»
-// عرضٌ للأساسي). نطابق كل صفّ **برقم منتج الافتراضي** (عمود id مثل 263).
+// خانات التوجيه لكل منتج (بالترتيب): «Gönderilebilir Apileri» ثم Api 1 ثم Api 2.
+// تسمية زينت مضلِّلة: «Gönderilebilir Apileri» هي فعلياً خانة التوجيه الأولى (الأساسية)
+// وليست عرضاً، فنبدأ منها. نطابق كل صفّ **برقم منتج الافتراضي** (عمود id مثل 263).
 // أوضاع: inspect (يُرجع البنية) | dryrun (بلا كتابة) | apply (يكتب؛ زينت يحفظ تلقائياً).
 // المدخلات: ROUTE_MODE, ROUTE_PLAN = { '<رقم المنتج>': ['اسم1','اسم2'] } (Kapat=إغلاق).
 // ════════════════════════════════════════════════════════════════════════════
@@ -107,7 +108,8 @@ async function readPage(page) {
   });
 }
 
-// يضبط خانة (0=Api1, 1=Api2) لصفّ رقمه id. status: set|already|missing|no_slot|row_not_found
+// يضبط خانة (0=Gönderilebilir الأساسية, 1=Api1, 2=Api2) لصفّ رقمه id.
+// status: set|already|missing|no_slot|row_not_found
 async function setSlot(page, id, slotIdx, want, write) {
   return page.evaluate(({ id, slotIdx, want, write }) => {
     const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
@@ -122,7 +124,9 @@ async function setSlot(page, id, slotIdx, want, write) {
     }
     if (!tr) return { status: 'row_not_found' };
     const sels = [...tr.querySelectorAll('select')].filter(isRouting);
-    const api = sels.slice(-2); // خانتا التوجيه = آخر قائمتين (الأولى Gönderilebilir عرض)
+    // خانات التوجيه = آخر ثلاث قوائم: [Gönderilebilir Apileri, Api1, Api2].
+    // نبدأ من «Gönderilebilir» لأنها الخانة الأساسية الحقيقية رغم تسمية زينت المضلِّلة.
+    const api = sels.slice(-3);
     if (slotIdx >= api.length) return { status: 'no_slot' };
     const sel = api[slotIdx];
     const opts = [...sel.options];
@@ -137,20 +141,41 @@ async function setSlot(page, id, slotIdx, want, write) {
   }, { id, slotIdx, want, write });
 }
 
+// أسماء خانات التوجيه بترتيبها الفعلي على لوحة زينت (رغم تسميتها المضلِّلة).
+const SLOT_LABELS = ['Gön', 'Api1', 'Api2'];
+
 async function applyPlan(page, write) {
   const results = [];
   for (const [id, wanted] of Object.entries(PLAN)) {
     const rowRes = { ref: id, set: [], missing: [], note: '' };
-    for (let i = 0; i < Math.min(2, wanted.length); i++) {
+    // نملأ خانتَي التوجيه المطلوبتين: 0=«Gönderilebilir» (الأرخص) ثم 1=Api1 (التالي).
+    const use = Math.min(2, wanted.length);
+    let rowMissing = false;
+    for (let i = 0; i < use; i++) {
       const want = wanted[i];
-      if (String(want).toLowerCase() === 'kapat') continue;
+      const isKapat = String(want).toLowerCase() === 'kapat';
       const r = await setSlot(page, id, i, want, write);
-      if (r.status === 'row_not_found') { rowRes.note = 'row_not_found'; break; }
-      if (r.status === 'set' || r.status === 'already') rowRes.set.push(`Api${i + 1}=${want}`);
+      if (r.status === 'row_not_found') { rowRes.note = 'row_not_found'; rowMissing = true; break; }
+      // «Kapat» في الخطة = أغلق هذه الخانة فعلياً (لا تتركها بقيمة قديمة).
+      if (r.status === 'set' || r.status === 'already') rowRes.set.push(`${SLOT_LABELS[i]}=${isKapat ? 'Kapat' : want}`);
       else if (r.status === 'missing') rowRes.missing.push(want);
       if (write && r.status === 'set') {
         await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
         await page.waitForTimeout(400);
+      }
+    }
+    // نُغلق أي خانة توجيه زائدة بعد الخانتين المطلوبتين (Api2) حتى لا تبقى قيمة قديمة.
+    if (!rowMissing) {
+      for (let i = use; i < SLOT_LABELS.length; i++) {
+        const r = await setSlot(page, id, i, 'kapat', write);
+        if (r.status === 'no_slot' || r.status === 'row_not_found') break;
+        if (r.status === 'set') {
+          rowRes.set.push(`${SLOT_LABELS[i]}=Kapat`);
+          if (write) {
+            await page.waitForLoadState('domcontentloaded', { timeout: NAV_TIMEOUT }).catch(() => {});
+            await page.waitForTimeout(400);
+          }
+        }
       }
     }
     results.push(rowRes);
