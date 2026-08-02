@@ -632,11 +632,13 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
         <div className="p-4 border-b flex flex-wrap items-end gap-3">
           <div>
             <label className="block text-xs text-gray-500 mb-1">النوع</label>
-            <select value={type} onChange={(e) => { setType(e.target.value); setPlan(null); setResult(null); }}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 sm:w-48">
-              {categories.length === 0 && <option value="">—</option>}
-              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <CategorySelect
+              value={type}
+              options={categories}
+              onChange={(v) => { setType(v); setPlan(null); setResult(null); }}
+              placeholder="اختر النوع..."
+              allLabel={null}
+            />
           </div>
           <button onClick={preview} disabled={busy || !type}
             className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-bold disabled:opacity-50">
@@ -758,8 +760,10 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
   );
 }
 
-// منسدلة فلتر المنتج مع حقل بحث
-function CategorySelect({ value, options, onChange }) {
+// منسدلة فلتر/اختيار المنتج مع حقل بحث.
+// - placeholder: نص الزر حين لا قيمة.
+// - allLabel: نص خيار «الكل» (مسحُ الاختيار)؛ مرِّر null لإخفائه (اختيار إلزامي).
+function CategorySelect({ value, options, onChange, placeholder = 'كل المنتجات', allLabel = 'كل المنتجات' }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const ref = useRef(null);
@@ -784,7 +788,7 @@ function CategorySelect({ value, options, onChange }) {
         className="w-full flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-400"
       >
         <Filter size={16} className="text-gray-400 shrink-0" />
-        <span className={`flex-1 truncate text-right ${value ? 'text-gray-800' : 'text-gray-500'}`}>{value || 'كل المنتجات'}</span>
+        <span className={`flex-1 truncate text-right ${value ? 'text-gray-800' : 'text-gray-500'}`}>{value || placeholder}</span>
         <ChevronDown size={16} className="text-gray-400 shrink-0" />
       </button>
       {open && (
@@ -802,15 +806,17 @@ function CategorySelect({ value, options, onChange }) {
             </div>
           </div>
           <ul className="overflow-y-auto">
-            <li>
-              <button
-                type="button"
-                onClick={() => pick('')}
-                className={`w-full flex items-center justify-between px-3 py-2 text-sm text-right hover:bg-emerald-50 ${!value ? 'text-emerald-700 font-bold' : 'text-gray-700'}`}
-              >
-                كل المنتجات {!value && <Check size={15} />}
-              </button>
-            </li>
+            {allLabel != null && (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => pick('')}
+                  className={`w-full flex items-center justify-between px-3 py-2 text-sm text-right hover:bg-emerald-50 ${!value ? 'text-emerald-700 font-bold' : 'text-gray-700'}`}
+                >
+                  {allLabel} {!value && <Check size={15} />}
+                </button>
+              </li>
+            )}
             {filtered.map((o) => (
               <li key={o}>
                 <button
