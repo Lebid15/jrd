@@ -1062,8 +1062,10 @@ function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId,
                     </td>
                     {shownOthers.map((s) => {
                       const cell = g.prices[s.item_id];
-                      const isCheapest = cell && cheapest != null && cell.available && cell.price === cheapest;
-                      if (!cell || !cell.available || !(cell.price > 0)) {
+                      // زر «ربط» يظهر فقط عند غياب أي سعر لهذا المصدر (لا ربط ولا مطابقة).
+                      // الربط اليدوي يُظهر السعر دائماً حتى لو كانت الباقة «غير متاحة» في المصدر
+                      // (المستخدم اختارها عمداً)؛ المطابقة التلقائية تلتزم بالتوفّر.
+                      if (!cell || (!cell.manual && (!cell.available || !(cell.price > 0)))) {
                         return (
                           <td key={s.item_id} className="py-2 px-3 text-center">
                             <button
@@ -1076,10 +1078,14 @@ function KontorCompare({ tab, sources, groups, q, catFilter, loading, defaultId,
                           </td>
                         );
                       }
+                      const isCheapest = cheapest != null && cell.available && cell.price === cheapest;
+                      const unavailable = cell.manual && !cell.available;
                       return (
                         <td key={s.item_id} className={`py-2 px-3 text-center ${isCheapest ? 'bg-emerald-100 text-emerald-800 font-bold rounded' : 'text-gray-700'} ${cell.manual ? 'ring-1 ring-inset ring-indigo-200' : ''}`}>
                           <div className="flex items-center justify-center gap-1">
-                            <span title={cell.name}>{fmt(cell.price)}</span>
+                            <span title={unavailable ? `${cell.name} — غير متاحة حالياً في المصدر` : cell.name} className={unavailable ? 'text-amber-600' : ''}>
+                              {fmt(cell.price)}{unavailable && ' *'}
+                            </span>
                             {cell.manual && (
                               <button onClick={() => doUnlink(g, s)} className="text-indigo-400 hover:text-red-500" title="إلغاء الربط اليدوي">
                                 <X size={12} />
