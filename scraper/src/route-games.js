@@ -97,8 +97,10 @@ async function readPage(page) {
     if (firstR) sampleOptions = [...firstR.options].map((o) => clean(o.textContent));
     const rows = [];
     for (const tr of document.querySelectorAll('table tr')) {
-      const sels = [...tr.querySelectorAll('select')].filter(isRouting);
-      if (!sels.length) continue;
+      // صفّ منتج = فيه قائمة توجيه واحدة على الأقل. للتشخيص نعرض **كل** قوائمه الثلاث
+      // بالترتيب [Gönderilebilir, Api1, Api2] لا المُكتشفة بـ isRouting فقط.
+      if (![...tr.querySelectorAll('select')].some(isRouting)) continue;
+      const sels = [...tr.querySelectorAll('select')].slice(-3);
       const cells = [...tr.children].map((c) => clean(c.textContent));
       const idCell = cells.find((t) => /^\d+$/.test(t)) || '';
       const name = cells.find((t) => t && !/^[\d.,\s]+$/.test(t)) || '';
@@ -113,20 +115,26 @@ async function readPage(page) {
 async function setSlot(page, id, slotIdx, want, write) {
   return page.evaluate(({ id, slotIdx, want, write }) => {
     const clean = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
-    const stripPrice = (s) => clean(s.replace(/\s*[-–]\s*[\d.,]+\s*$/, '').replace(/\s*\([^)]*\)\s*$/, ''));
+    // نُزيل السعر سواء جاء لاحقاً «كرما - 210» أو سابقاً «210 - كرما» (يظهر معكوساً
+    // بصرياً بسبب اتجاه RTL) لنُبقي اسم المزوّد وحده للمطابقة.
+    const stripPrice = (s) => clean(String(s ?? '')
+      .replace(/\s*\([^)]*\)\s*$/, '')
+      .replace(/\s*[-–]\s*[\d.,]+\s*$/, '')
+      .replace(/^\s*[\d.,]+\s*[-–]\s*/, ''));
     const isRouting = (sel) => [...sel.options].some((o) => { const t = clean(o.textContent).toLowerCase(); return t.includes('kapal') || t.includes('alternatif'); });
     let tr = null;
     for (const row of document.querySelectorAll('table tr')) {
+      // اكتشاف صفّ المنتج: يكفي وجود قائمة توجيه واحدة (Api1/Api2 تحوي «Alternatif Kapalı»).
       const sels = [...row.querySelectorAll('select')].filter(isRouting);
       if (!sels.length) continue;
       const cells = [...row.children].map((c) => clean(c.textContent));
       if (cells.some((t) => t === String(id))) { tr = row; break; }
     }
     if (!tr) return { status: 'row_not_found' };
-    const sels = [...tr.querySelectorAll('select')].filter(isRouting);
-    // خانات التوجيه = آخر ثلاث قوائم: [Gönderilebilir Apileri, Api1, Api2].
-    // نبدأ من «Gönderilebilir» لأنها الخانة الأساسية الحقيقية رغم تسمية زينت المضلِّلة.
-    const api = sels.slice(-3);
+    // خانات التوجيه = آخر ثلاث قوائم في الصفّ: [Gönderilebilir Apileri, Api1, Api2].
+    // نأخذ **كل** قوائم الصفّ (لا المُكتشفة بـ isRouting فقط) لأن «Gönderilebilir» لا تملك
+    // خيار «Alternatif Kapalı» فلا يكشفها isRouting — وهي الخانة الأساسية التي نبدأ منها.
+    const api = [...tr.querySelectorAll('select')].slice(-3);
     if (slotIdx >= api.length) return { status: 'no_slot' };
     const sel = api[slotIdx];
     const opts = [...sel.options];
