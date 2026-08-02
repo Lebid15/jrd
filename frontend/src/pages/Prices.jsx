@@ -656,9 +656,14 @@ function RouteCheapestModal({ tab, defaultId, sourceIds, priorities, categories,
               <thead className="sticky top-0 bg-gray-100">
                 <tr className="text-gray-600">
                   <th className="py-2 px-3 text-right">الباقة (رقم الربط)</th>
-                  {Array.from({ length: plan[0]?.slots?.length || 3 }).map((_, i) => (
-                    <th key={i} className="py-2 px-3 text-center">API{i + 1}{i === 0 ? ' (الأرخص)' : ''}</th>
-                  ))}
+                  {Array.from({ length: plan[0]?.slots?.length || 3 }).map((_, i) => {
+                    // الألعاب: أسماء أعمدة زينت الحقيقية (Gönderilebilir هي خانة التوجيه الأولى).
+                    const gamesCols = ['Gönderilebilir', 'Api 1', 'Api 2'];
+                    const label = tab === 'games' ? (gamesCols[i] || `Api ${i + 1}`) : `API${i + 1}`;
+                    return (
+                      <th key={i} className="py-2 px-3 text-center">{label}{i === 0 ? ' (الأرخص)' : ''}</th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
